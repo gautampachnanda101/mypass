@@ -1,0 +1,3 @@
+vault.local {
+    reverse_proxy vaultwarden:80
+}
