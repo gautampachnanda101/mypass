@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "My Vault",
   "version": "1.0",
-  "permissions": ["storage", "activeTab", "scripting", "tabs"],
-  "host_permissions": ["https://vault.local/*", "<all_urls>"],
+  "permissions": ["storage", "activeTab", "tabs"],
+  "host_permissions": ["https://vault.local/*"],
   "content_security_policy": {
     "extension_pages": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src https://vault.local; object-src 'none'"
   },

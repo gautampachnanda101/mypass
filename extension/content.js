@@ -15,6 +15,26 @@ const USERNAME_SELECTORS = [
 ].join(", ");
 
 /**
+ * Set a value on an input and dispatch native `input` + `change` events so
+ * that React, Vue, Angular and other SPA frameworks register the change.
+ * @param {HTMLInputElement} el
+ * @param {string} value
+ */
+function setNativeValue(el, value) {
+  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    "value"
+  )?.set;
+  if (nativeInputValueSetter) {
+    nativeInputValueSetter.call(el, value);
+  } else {
+    el.value = value;
+  }
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+/**
  * Fill username and password fields on the current page.
  * @param {string} username
  * @param {string} password
@@ -23,8 +43,8 @@ function autofill(username, password) {
   const userField = document.querySelector(USERNAME_SELECTORS);
   const passField = document.querySelector("input[type='password']");
 
-  if (userField) userField.value = username;
-  if (passField) passField.value = password;
+  if (userField) setNativeValue(userField, username);
+  if (passField) setNativeValue(passField, password);
 }
 
 // Listen for autofill messages from the background service worker

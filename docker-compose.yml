@@ -6,9 +6,9 @@ services:
     container_name: vaultwarden
     restart: unless-stopped
     environment:
-      - DOMAIN=https://vault.local
-      - WEBSOCKET_ENABLED=true
-      - SIGNUPS_ALLOWED=false
+      - DOMAIN=${VAULT_DOMAIN:-https://vault.local}
+      - WEBSOCKET_ENABLED=${WEBSOCKET_ENABLED:-true}
+      - SIGNUPS_ALLOWED=${SIGNUPS_ALLOWED:-false}
       - ADMIN_TOKEN=${ADMIN_TOKEN}
     volumes:
       - ./data:/data

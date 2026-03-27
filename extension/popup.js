@@ -67,12 +67,7 @@ document.getElementById("unlock").addEventListener("click", async () => {
 
 async function autofillItem(username, password) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) return;
+  if (!tab?.id) return;
 
-  chrome.runtime.sendMessage({
-    type: "autofill",
-    tabId: tab.id,
-    username,
-    password,
-  });
+  chrome.tabs.sendMessage(tab.id, { type: "autofill", username, password });
 }
