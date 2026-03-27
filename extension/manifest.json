@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "My Vault",
+  "version": "1.0",
+  "permissions": ["storage", "activeTab", "tabs"],
+  "host_permissions": ["https://dev-uk.uk/*"],
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src https://dev-uk.uk; object-src 'none'"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}

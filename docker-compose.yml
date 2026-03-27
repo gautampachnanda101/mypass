@@ -1,0 +1,55 @@
+version: "3.8"
+
+services:
+  # ── Next.js web app ────────────────────────────────────────────────────────
+  webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mypass_webapp
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_VAULT_API=${VAULT_DOMAIN:-https://dev-uk.uk}/api
+    networks:
+      - internal
+
+  # ── Vaultwarden (Bitwarden-compatible API + built-in web vault) ────────────
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: unless-stopped
+    environment:
+      - DOMAIN=${VAULT_DOMAIN:-https://dev-uk.uk}
+      - WEBSOCKET_ENABLED=${WEBSOCKET_ENABLED:-true}
+      - SIGNUPS_ALLOWED=${SIGNUPS_ALLOWED:-false}
+      - ADMIN_TOKEN=${ADMIN_TOKEN}
+    volumes:
+      - ./data:/data
+    networks:
+      - internal
+
+  # ── Caddy (TLS termination + reverse proxy) ────────────────────────────────
+  caddy:
+    image: caddy:latest
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - webapp
+      - vaultwarden
+    networks:
+      - internal
+
+networks:
+  internal:
+
+volumes:
+  caddy_data:
+  caddy_config:
