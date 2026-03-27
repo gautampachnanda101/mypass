@@ -1,3 +1,18 @@
 vault.local {
-    reverse_proxy vaultwarden:80
+    # MyPass Next.js web app — root of the site
+    handle /* {
+        reverse_proxy webapp:3000
+    }
+
+    # Vaultwarden API + WebSocket notifications
+    handle /api/* {
+        reverse_proxy vaultwarden:80
+    }
+    handle /notifications/hub* {
+        reverse_proxy vaultwarden:3012
+    }
+    # Vaultwarden built-in admin panel
+    handle /admin* {
+        reverse_proxy vaultwarden:80
+    }
 }
