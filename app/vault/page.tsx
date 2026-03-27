@@ -10,6 +10,7 @@ import {
 } from "@/lib/vault";
 import type { VaultItem } from "@/types";
 import { useVaultKey } from "../components/VaultProvider";
+import ImportPasswords from "../components/ImportPasswords";
 
 export default function VaultPage() {
   const router = useRouter();
@@ -169,6 +170,17 @@ export default function VaultPage() {
           {formError && <p style={styles.error}>{formError}</p>}
         </form>
       </section>
+
+      {/* Import from other password managers */}
+      {key && (
+        <section style={styles.section}>
+          <h2 style={styles.sectionTitle}>Import passwords</h2>
+          <ImportPasswords
+            cryptoKey={key}
+            onImportDone={() => setItems(listItems())}
+          />
+        </section>
+      )}
 
       {/* Reveal error banner */}
       {revealError && (

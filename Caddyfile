@@ -1,4 +1,4 @@
-vault.local {
+dev-uk.uk {
     # MyPass Next.js web app — root of the site
     handle /* {
         reverse_proxy webapp:3000

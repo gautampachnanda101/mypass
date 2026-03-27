@@ -1,7 +1,7 @@
 // popup.js — handles unlock flow and vault item display.
 // ⚠️  Crypto is a placeholder — replace with real Argon2 + AES implementation.
 
-const API = "https://vault.local/api";
+const API = "https://dev-uk.uk/api";
 
 document.getElementById("unlock").addEventListener("click", async () => {
   const password = document.getElementById("password").value.trim();
