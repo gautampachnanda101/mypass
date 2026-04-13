@@ -112,6 +112,26 @@ func (r *Registry) splitRef(tail string) (providerID, path string, err error) {
 	return r.defaultID, tail, nil
 }
 
+// List returns secret metadata from all registered providers with the given prefix.
+// Values are not included — callers must Get explicitly.
+func (r *Registry) List(ctx context.Context, prefix string) ([]providers.Secret, error) {
+	var all []providers.Secret
+	seen := map[string]bool{}
+	for _, p := range r.providers {
+		secrets, err := p.List(ctx, prefix)
+		if err != nil {
+			continue // unavailable providers are skipped
+		}
+		for _, s := range secrets {
+			if !seen[s.Key] {
+				seen[s.Key] = true
+				all = append(all, s)
+			}
+		}
+	}
+	return all, nil
+}
+
 // Get resolves a single vault: reference string (convenience wrapper).
 func (r *Registry) Get(ctx context.Context, ref string) (string, error) {
 	if !strings.HasPrefix(ref, vaultPrefix) {

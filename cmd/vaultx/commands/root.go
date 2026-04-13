@@ -69,6 +69,7 @@ Quick start:
 		cmdImport(),
 		cmdExport(),
 		cmdProviders(),
+		cmdServe(),
 		cmdVersion(),
 	)
 
