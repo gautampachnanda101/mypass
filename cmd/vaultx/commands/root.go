@@ -8,6 +8,7 @@ import (
 
 	"github.com/gautampachnanda101/vaultx/internal/config"
 	"github.com/gautampachnanda101/vaultx/internal/providers/local"
+	"github.com/gautampachnanda101/vaultx/internal/providers/onepassword"
 	"github.com/gautampachnanda101/vaultx/internal/resolver"
 )
 
@@ -89,9 +90,17 @@ func loadState() error {
 	}
 	state.vault = local.New("local", vaultPath)
 
-	// Build resolver registry — start with local; more providers added as they're implemented.
+	// Build resolver registry from config.
 	state.registry = resolver.NewRegistry()
-	state.registry.Register(state.vault, true)
+	state.registry.Register(state.vault, true) // local is always registered
+
+	for _, pc := range cfg.Providers {
+		switch pc.Type {
+		case "onepassword":
+			p := onepassword.New(pc.ID, pc.Account, pc.Vault)
+			state.registry.Register(p, pc.Default)
+		}
+	}
 
 	return nil
 }
