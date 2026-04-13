@@ -71,6 +71,7 @@ Quick start:
 		cmdProviders(),
 		cmdServe(),
 		cmdDocker(),
+		cmdK3d(),
 		cmdVersion(),
 	)
 
