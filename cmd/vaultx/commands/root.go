@@ -70,6 +70,7 @@ Quick start:
 		cmdExport(),
 		cmdProviders(),
 		cmdServe(),
+		cmdDocker(),
 		cmdVersion(),
 	)
 
