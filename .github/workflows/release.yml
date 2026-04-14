@@ -147,6 +147,8 @@ jobs:
           release_commit="$(git rev-parse --short=12 HEAD)"
           release_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+          cp VAULTX_USER_GUIDE.md dist/VAULTX_USER_GUIDE.md
+
           for goarch in amd64 arm64; do
             case "$goarch" in
               amd64) arch_label="x86_64" ;;
@@ -156,7 +158,7 @@ jobs:
               -trimpath \
               -ldflags="-s -w -X main.version=${release_version} -X main.commit=${release_commit} -X main.date=${release_date}" \
               -o dist/vaultx ./cmd/vaultx
-            tar -C dist -czf "dist/vaultx_Darwin_${arch_label}.tar.gz" vaultx
+            tar -C dist -czf "dist/vaultx_Darwin_${arch_label}.tar.gz" vaultx VAULTX_USER_GUIDE.md
             rm -f dist/vaultx
           done
 
@@ -196,6 +198,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
+          cp VAULTX_USER_GUIDE.md dist/VAULTX_USER_GUIDE.md
           release_version="${{ steps.vars.outputs.version }}"
           release_version="${release_version#v}"
           release_commit="$(git rev-parse --short=12 HEAD)"
@@ -226,9 +229,9 @@ jobs:
             archive_name="vaultx_${os_label}_${arch_label}.${ext}"
 
             if [[ "$ext" == "zip" ]]; then
-              (cd dist && zip -q "$archive_name" "$bin_name")
+              (cd dist && zip -q "$archive_name" "$bin_name" "VAULTX_USER_GUIDE.md")
             else
-              tar -C dist -czf "dist/$archive_name" "$bin_name"
+              tar -C dist -czf "dist/$archive_name" "$bin_name" "VAULTX_USER_GUIDE.md"
             fi
             rm -f "dist/$bin_name"
           }
@@ -311,7 +314,8 @@ jobs:
             --clobber \
             dist/vaultx_*.tar.gz \
             dist/vaultx_*.zip \
-            dist/checksums.txt
+            dist/checksums.txt \
+            dist/VAULTX_USER_GUIDE.md
 
   release-and-update-tap:
     needs:
