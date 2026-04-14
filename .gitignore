@@ -1,6 +1,6 @@
 # Binaries
-vaultx
-vaultx.exe
+/vaultx
+/vaultx.exe
 dist/
 
 # Go build cache
