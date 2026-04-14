@@ -259,6 +259,17 @@ jobs:
     env:
       TAP_REPO: gautampachnanda101/homebrew-tap
     steps:
+      - name: Validate tap publish token
+        shell: bash
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN || secrets.PUBLIC_REPO_PUBLISH }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAP_TOKEN}" ]]; then
+            echo "::error::Missing secret: set HOMEBREW_TAP_GITHUB_TOKEN (or PUBLIC_REPO_PUBLISH) with repo scope on gautampachnanda101/homebrew-tap and gautampachnanda101/scoop-bucket." >&2
+            exit 1
+          fi
+
       - name: Resolve version
         id: vars
         shell: bash
