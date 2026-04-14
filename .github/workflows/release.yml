@@ -154,7 +154,7 @@ jobs:
               amd64) arch_label="x86_64" ;;
               arm64) arch_label="arm64" ;;
             esac
-            CGO_ENABLED=0 GOOS=darwin GOARCH="$goarch" go build \
+            CGO_ENABLED=1 GOOS=darwin GOARCH="$goarch" go build \
               -trimpath \
               -ldflags="-s -w -X main.version=${release_version} -X main.commit=${release_commit} -X main.date=${release_date}" \
               -o dist/vaultx ./cmd/vaultx

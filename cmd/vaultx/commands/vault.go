@@ -11,15 +11,23 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gautampachnanda101/vaultx/internal/config"
+	"github.com/gautampachnanda101/vaultx/internal/passkey"
 	"github.com/gautampachnanda101/vaultx/internal/providers/local"
 )
 
 func cmdInit() *cobra.Command {
-	return &cobra.Command{
+	var biometric bool
+
+	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Create a new local vault",
-		Long:  "Create a new local vault at ~/.vaultx/vault.enc encrypted with AES-256-GCM.\nYou will be prompted to choose a master password. The password is never stored —\nArgon2id derives a barrier key that wraps the encryption key in memory only.",
-		Example: `  vaultx init`,
+		Long: "Create a new local vault at ~/.vaultx/vault.enc encrypted with AES-256-GCM.\n" +
+			"You will be prompted to choose a master password. The password is never stored —\n" +
+			"Argon2id derives a barrier key that wraps the encryption key in memory only.\n\n" +
+			"Use --biometric to save the master password in the macOS Keychain gated by Touch ID.\n" +
+			"Subsequent unlocks will authenticate via Touch ID instead of prompting for a password.",
+		Example: `  vaultx init
+  vaultx init --biometric`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load(globalFlags.configPath)
 			if err != nil {
@@ -51,21 +59,59 @@ func cmdInit() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(os.Stderr, "Vault created at %s\n", vaultPath)
+
+			if biometric {
+				if ok, reason := passkey.BiometricAvailable(); !ok {
+					fmt.Fprintf(os.Stderr, "WARN: biometric unlock not available: %s\n", reason)
+				} else if err := passkey.Store(pass, true); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: could not save to keychain: %v\n", err)
+				} else {
+					fmt.Fprintln(os.Stderr, "Touch ID unlock enabled.")
+				}
+			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&biometric, "biometric", false, "save master password in macOS Keychain gated by Touch ID")
+	return cmd
 }
 
 func cmdUnlock() *cobra.Command {
-	return &cobra.Command{
-		Use:     "unlock",
-		Short:   "Unlock the vault (cache key for this session)",
-		Long:    "Prompt for the master password and cache the derived key for this session.\nThe vault remains unlocked until 'vaultx lock' is called or the process exits.",
-		Example: `  vaultx unlock`,
+	var biometric bool
+
+	cmd := &cobra.Command{
+		Use:   "unlock",
+		Short: "Unlock the vault (cache key for this session)",
+		Long: "Prompt for the master password and cache the derived key for this session.\n" +
+			"The vault remains unlocked until 'vaultx lock' is called or the process exits.\n\n" +
+			"Use --biometric to enable Touch ID for future unlocks. The master password is\n" +
+			"saved in the macOS Keychain and retrieved via Touch ID on subsequent runs.",
+		Example: `  vaultx unlock
+  vaultx unlock --biometric`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return requireUnlocked()
+			if err := requireUnlocked(); err != nil {
+				return err
+			}
+			if biometric {
+				if ok, reason := passkey.BiometricAvailable(); !ok {
+					fmt.Fprintf(os.Stderr, "WARN: biometric unlock not available: %s\n", reason)
+					return nil
+				}
+				pass, err := readPassword("Re-enter master password to save for Touch ID: ")
+				if err != nil {
+					return err
+				}
+				if err := passkey.Store(pass, true); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: could not save to keychain: %v\n", err)
+				} else {
+					fmt.Fprintln(os.Stderr, "Touch ID unlock enabled.")
+				}
+			}
+			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&biometric, "biometric", false, "save master password in macOS Keychain gated by Touch ID")
+	return cmd
 }
 
 func cmdLock() *cobra.Command {

@@ -5,8 +5,10 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/gautampachnanda101/vaultx/internal/config"
+	"github.com/gautampachnanda101/vaultx/internal/passkey"
 	"github.com/gautampachnanda101/vaultx/internal/providers/local"
 	"github.com/gautampachnanda101/vaultx/internal/providers/onepassword"
 	"github.com/gautampachnanda101/vaultx/internal/resolver"
@@ -248,10 +250,19 @@ func loadState() error {
 	return nil
 }
 
-// requireUnlocked prompts for the master password if the vault is sealed.
+// requireUnlocked unlocks the vault. It first tries the passkey store (Touch ID
+// on macOS), then falls back to prompting the user for their master password.
 func requireUnlocked() error {
 	if !state.vault.IsSealed() {
 		return nil
+	}
+	// Try the passkey store first — Touch ID on macOS, no-op elsewhere.
+	if stored, ok := passkey.Load(); ok {
+		if err := state.vault.Unlock(stored); err == nil {
+			return nil
+		}
+		// Stored credential is stale — clear it and fall through to prompt.
+		passkey.Clear()
 	}
 	pass, err := readPassword("Master password: ")
 	if err != nil {
@@ -263,6 +274,15 @@ func requireUnlocked() error {
 // readPassword reads a password from the terminal without echo.
 func readPassword(prompt string) (string, error) {
 	fmt.Fprint(os.Stderr, prompt)
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		b, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr) // newline after silent input
+		if err != nil {
+			return "", fmt.Errorf("read password: %w", err)
+		}
+		return string(b), nil
+	}
+	// Non-interactive fallback (pipes, CI).
 	var pass string
 	if _, err := fmt.Fscanln(os.Stdin, &pass); err != nil {
 		return "", fmt.Errorf("read password: %w", err)
