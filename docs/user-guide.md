@@ -41,6 +41,8 @@ vaultx --help
 vaultx run --help
 vaultx k3d --help
 vaultx docker --help
+vaultx doctor --help
+vaultx completion --help
 ```
 
 ---
@@ -200,21 +202,9 @@ id      = "work"
 type    = "onepassword"
 account = "my.1password.com"
 vault   = "Work"
-
-# HashiCorp Vault (coming soon)
-[[providers]]
-id        = "prod"
-type      = "hashicorp"
-address   = "https://vault.example.com"
-token_env = "VAULT_TOKEN"
-
-# AWS Secrets Manager (coming soon)
-[[providers]]
-id       = "aws"
-type     = "aws"
-region   = "eu-west-2"
-role_arn = "arn:aws:iam::123456789:role/vaultx"
 ```
+
+Currently implemented providers in the binary are `local` and `onepassword`.
 
 Check all provider statuses:
 
@@ -245,7 +235,6 @@ Secret URI format: `vault:<provider-id>/<path>`
 | --- | --- |
 | `vault:local/…` | Local encrypted vault (always available) |
 | `vault:work/…` | 1Password (requires `op` CLI signed in) |
-| `vault:prod/…` | HashiCorp Vault / AWS |
 | `vault:myapp/key` (no prefix) | Default provider |
 
 ---
@@ -350,6 +339,7 @@ master password
 vaultx init                          Create a new local vault
 vaultx unlock                        Unlock the vault for this session
 vaultx lock                          Lock the vault (clear key from memory)
+vaultx doctor                        Check runtime dependencies and vault health
 
 vaultx set <path> <value>            Store a secret in the local vault
 vaultx get <path>                    Get a single secret value
@@ -363,8 +353,10 @@ vaultx import [--format f] <file>    Import from a password manager export
 vaultx export [--format f] [-o file] Export to file
 
 vaultx providers                     List configured providers + health
+vaultx completion [shell]            Install shell completion
 
-vaultx serve [--port N]              Start local HTTP daemon (default port 7474)
+vaultx serve [--port N] [--max-memory MiB]
+                                     Start local HTTP daemon (default port 7474)
 
 vaultx docker run -- <args>          docker run with secrets as --env flags
 vaultx docker compose -- <args>      docker compose with secrets in child env
@@ -377,7 +369,9 @@ vaultx k3d status                    Show ESO / SecretStore / ExternalSecret sta
 vaultx version                       Print version
 ```
 
-Global flags: `--config <path>`, `--env <vaultx.env path>`
+Global flags: `--config <path>`, `--env <vaultx.env path>`, `--color auto|always|never`, `--emoji auto|always|never`
+
+For planned (not yet implemented) features, see [../roadmap.md](../roadmap.md).
 
 ---
 

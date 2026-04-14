@@ -10,7 +10,6 @@ the real value into the process — nothing touches disk.
 # vaultx.env  ← commit this
 DB_PASSWORD=vault:local/myapp/db_password
 API_KEY=vault:work/Vault/stripe-api-key    # from 1Password
-JWT_SECRET=vault:aws/myapp/jwt_secret       # from AWS Secrets Manager
 PORT=3000                                   # plain values pass through
 ```
 
@@ -43,7 +42,7 @@ go build -o vaultx ./cmd/vaultx
 
 ```bash
 # 1. Create a new local vault
-vaultx init
+vaultx init --biometric   # macOS: optionally enable Touch ID at setup time
 
 # 2. Store some secrets
 vaultx set myapp/db_password "s3cr3t"
@@ -78,7 +77,6 @@ Secret references use the URI format `vault:<provider>/<path>`:
 | --- | --- |
 | `vault:local/…` | Local encrypted file vault |
 | `vault:work/…` | 1Password (via `op` CLI) |
-| `vault:prod/…` | HashiCorp Vault / AWS / custom |
 | `vault:myapp/key` (no prefix) | Default provider |
 
 Plain values (no `vault:` prefix) pass through unchanged — all existing `.env` files
@@ -116,12 +114,24 @@ Rotating the master password re-wraps the EK only — entries are never re-encry
 
 ---
 
+## Built-in help
+
+`vaultx` ships its own command help, health checks, and shell completion installer.
+
+```bash
+vaultx --help
+vaultx run --help
+vaultx doctor
+vaultx completion
+```
+
 ## CLI reference
 
 ```text
 vaultx init                          Create a new local vault
 vaultx unlock                        Unlock the vault for this session
 vaultx lock                          Lock the vault (clear key from memory)
+vaultx doctor                        Check runtime dependencies and vault health
 
 vaultx set <path> <value>            Store a secret in the local vault
 vaultx get <path>                    Get a single secret value
@@ -135,6 +145,8 @@ vaultx import [--format f] <file>    Import from external password manager
 vaultx export [--format f] [-o file] Export to file
 
 vaultx providers                     List configured providers + health
+vaultx completion [shell]            Install shell completion
+vaultx version                       Print version
 
 vaultx serve [--port N]              Start local HTTP daemon (port 7474)
 
@@ -146,7 +158,7 @@ vaultx k3d token                     Refresh vaultx-token k8s secret
 vaultx k3d status                    Show ESO / SecretStore / ExternalSecret status
 ```
 
-Global flags: `--config <path>`, `--env <vaultx.env path>`
+Global flags: `--config <path>`, `--env <vaultx.env path>`, `--color auto|always|never`, `--emoji auto|always|never`
 
 ---
 
@@ -205,19 +217,6 @@ type    = "onepassword"
 account = "my.1password.com"
 vault   = "Work"
 
-# HashiCorp Vault (coming soon)
-[[providers]]
-id        = "prod"
-type      = "hashicorp"
-address   = "https://vault.example.com"
-token_env = "VAULT_TOKEN"
-
-# AWS Secrets Manager (coming soon)
-[[providers]]
-id       = "aws"
-type     = "aws"
-region   = "eu-west-2"
-role_arn = "arn:aws:iam::123456789:role/vaultx"
 ```
 
 With this config:
@@ -226,8 +225,9 @@ With this config:
 # vaultx.env
 DB_PASS=vault:local/myapp/db       # from local vault
 STRIPE=vault:work/Payments/api-key  # from 1Password "Work" vault
-REDIS=vault:prod/myapp/redis-url    # from HashiCorp Vault
 ```
+
+The current binary registers `local` and `onepassword` providers. The config shape leaves room for additional providers later, but public usage should treat remote providers beyond 1Password as not yet shipped.
 
 ---
 
@@ -256,6 +256,8 @@ vaultx serve --port 7474
 
 # 2. One-time cluster setup (installs ESO + configures SecretStore)
 vaultx k3d setup
+vaultx k3d setup --cluster-wide
+vaultx k3d setup --namespace my-ns
 
 # 3. Declare what secrets your app needs
 kubectl apply -f k3d/externalsecret-example.yaml
@@ -334,3 +336,5 @@ go build ./cmd/vaultx
 
 See [SPEC.md](SPEC.md) for the full product specification and [AGENTS.md](AGENTS.md)
 for coding agent context.
+
+For planned (not yet implemented) features, see [roadmap.md](roadmap.md).

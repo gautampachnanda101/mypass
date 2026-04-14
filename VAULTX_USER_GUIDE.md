@@ -85,7 +85,6 @@ vault:<provider-id>/<path>
 | --- | --- |
 | `vault:local/myapp/key` | Local encrypted file vault |
 | `vault:work/Vault/stripe` | 1Password (via `op` CLI) |
-| `vault:prod/myapp/db` | HashiCorp Vault / AWS |
 | `vault:myapp/key` (no prefix) | Default provider |
 
 Plain values (no `vault:` prefix) are passed through as-is — any existing
@@ -213,6 +212,8 @@ STRIPE=vault:work/Payments/api-key  # 1Password
 PORT=3000                           # plain value — passed through
 ```
 
+Currently implemented providers in the binary are `local` and `onepassword`.
+
 Check provider health:
 
 ```bash
@@ -270,6 +271,7 @@ vaultx k3d status
 vaultx init                          Create a new local vault
 vaultx unlock                        Unlock the vault for this session
 vaultx lock                          Lock the vault (clear key from memory)
+vaultx doctor                        Check runtime dependencies and vault health
 
 vaultx set <path> <value>            Store a secret in the local vault
 vaultx get <path>                    Get a single secret value
@@ -283,8 +285,10 @@ vaultx import [--format f] <file>    Import from a password manager export
 vaultx export [--format f] [-o file] Export to file
 
 vaultx providers                     List configured providers and health
+vaultx completion [shell]            Install shell completion
 
-vaultx serve [--port N]              Start local HTTP daemon (default 7474)
+vaultx serve [--port N] [--max-memory MiB]
+                                     Start local HTTP daemon (default 7474)
 
 vaultx docker run -- <args>          docker run with secrets as --env flags
 vaultx docker compose -- <args>      docker compose with secrets in child env
@@ -296,7 +300,7 @@ vaultx k3d status                    Show ESO / SecretStore / ExternalSecret sta
 vaultx version                       Print version
 ```
 
-Global flags: `--config <path>`, `--env <vaultx.env path>`
+Global flags: `--config <path>`, `--env <vaultx.env path>`, `--color auto|always|never`, `--emoji auto|always|never`
 
 ---
 
@@ -336,3 +340,4 @@ There is no password recovery. Keep an offline backup via `vaultx export -f vaul
 
 - Source and releases: `https://github.com/gautampachnanda101/vaultx`
 - Issues: open a GitHub issue on the source repository
+- Planned features: [roadmap.md](roadmap.md)
