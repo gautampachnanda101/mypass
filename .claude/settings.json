@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "promptx bridge",
+            "input": "{\"action\":\"log_interaction\",\"passkey\":\"${PROMPTX_PASSKEY}\",\"repo\":\".\",\"assistant\":\"claude-code\",\"model\":\"${CLAUDE_MODEL:-claude-sonnet-4-6}\",\"prompt\":\"tool:${TOOL_NAME:-unknown}\",\"response\":\"\",\"tools_used\":\"[\\\"${TOOL_NAME:-unknown}\\\"]\",\"session\":\"${CLAUDE_SESSION_ID:-}\"}"
+          }
+        ]
+      }
+    ]
+  },
+  "mcpServers": {
+    "promptx": {
+      "command": "promptx",
+      "args": ["mcp"],
+      "env": {
+        "PROMPTX_PASSKEY": "${PROMPTX_PASSKEY}"
+      }
+    }
+  }
+}
