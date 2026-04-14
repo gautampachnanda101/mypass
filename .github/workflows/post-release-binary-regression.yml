@@ -1,0 +1,164 @@
+name: post-release-binary-regression
+
+on:
+  workflow_run:
+    workflows: ["release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to validate (for example v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  binary-regression-matrix:
+    name: Binary regression (${{ matrix.os_name }})
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os_name: Linux
+            asset_name: vaultx_Linux_x86_64.tar.gz
+            archive_type: tar
+            binary_path: ./dist/vaultx
+          - runner: macos-latest
+            os_name: macOS
+            asset_name: vaultx_Darwin_x86_64.tar.gz
+            archive_type: tar
+            binary_path: ./dist/vaultx
+          - runner: windows-latest
+            os_name: Windows
+            asset_name: vaultx_Windows_x86_64.zip
+            archive_type: zip
+            binary_path: ./dist/vaultx.exe
+    env:
+      TAP_REPO: gautampachnanda101/homebrew-tap
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            run_sha="${{ github.event.workflow_run.head_sha }}"
+            git fetch --tags --force >/dev/null 2>&1 || true
+            tag=$(git tag --points-at "$run_sha" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n 1 || true)
+
+            if [[ -z "$tag" ]]; then
+              echo "No semantic tag found for workflow SHA: $run_sha"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid tag: $tag" >&2
+            exit 1
+          fi
+
+          has_assets=false
+          if gh release view "$tag" --repo "$TAP_REPO" >/dev/null 2>&1; then
+            asset_count=$(gh release view "$tag" --repo "$TAP_REPO" --json assets --jq '.assets | length')
+            [[ "$asset_count" -gt 0 ]] && has_assets=true
+          fi
+          if [[ "$has_assets" == "false" ]]; then
+            if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              asset_count=$(gh release view "$tag" --repo "${{ github.repository }}" --json assets --jq '.assets | length')
+              [[ "$asset_count" -gt 0 ]] && has_assets=true
+            fi
+          fi
+          if [[ "$has_assets" == "false" ]]; then
+            echo "No binary assets published for $tag (docs-only or skipped release); skipping regression."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Skip when no tag is associated
+        if: steps.vars.outputs.skip == 'true'
+        shell: bash
+        run: |
+          echo "No release tag detected for this workflow run; skipping binary regression."
+          exit 0
+
+      - name: Download release binary from tap release
+        if: steps.vars.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tag="${{ steps.vars.outputs.tag }}"
+          asset="${{ matrix.asset_name }}"
+
+          if gh release view "$tag" --repo "$TAP_REPO" >/dev/null 2>&1; then
+            gh release download "$tag" \
+              --repo "$TAP_REPO" \
+              --pattern "$asset" \
+              --dir dist \
+              --clobber
+          else
+            gh release download "$tag" \
+              --repo "${{ github.repository }}" \
+              --pattern "$asset" \
+              --dir dist \
+              --clobber
+          fi
+
+      - name: Extract binary (tar)
+        if: steps.vars.outputs.skip != 'true' && matrix.archive_type == 'tar'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xzf "dist/${{ matrix.asset_name }}" -C dist
+          chmod +x dist/vaultx
+
+      - name: Extract binary (zip)
+        if: steps.vars.outputs.skip != 'true' && matrix.archive_type == 'zip'
+        shell: pwsh
+        run: |
+          Expand-Archive -Path "dist/${{ matrix.asset_name }}" -DestinationPath dist -Force
+
+      - name: Smoke test (Linux/macOS)
+        if: steps.vars.outputs.skip != 'true' && matrix.archive_type == 'tar'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ${{ matrix.binary_path }} --help
+          ${{ matrix.binary_path }} version
+
+      - name: Smoke test (Windows)
+        if: steps.vars.outputs.skip != 'true' && matrix.archive_type == 'zip'
+        shell: pwsh
+        run: |
+          & "${{ matrix.binary_path }}" --help
+          & "${{ matrix.binary_path }}" version
+
+      - name: Regression summary
+        if: steps.vars.outputs.skip != 'true'
+        shell: bash
+        run: |
+          echo "Validated binary tag: ${{ steps.vars.outputs.tag }}"
+          echo "Runner: ${{ matrix.os_name }}"
+          echo "Binary asset: ${{ matrix.asset_name }}"
+          echo "Checks: --help, version"

@@ -1,0 +1,592 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to release (for example v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  preflight-release-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.scope.outputs.should_release }}
+      changed_files: ${{ steps.scope.outputs.changed_files }}
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ github.event.inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Detect release-relevant changes
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_tag="${{ steps.vars.outputs.version }}"
+
+          prev_tag=$(git tag --list 'v*' --sort=version:refname | awk -v cur="$current_tag" '$0 < cur' | tail -n 1)
+
+          if [[ -z "$prev_tag" ]]; then
+            files=$(git show --name-only --pretty='' "$current_tag" | sed '/^$/d' | sort -u)
+          else
+            files=$(git diff --name-only "$prev_tag".."$current_tag" | sed '/^$/d' | sort -u)
+          fi
+
+          echo "Changed files since previous tag:"
+          echo "$files"
+
+          should_release="false"
+          while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            case "$f" in
+              cmd/*|internal/*|scripts/*|go.mod|go.sum|k3d/*|.github/workflows/release.yml|.github/workflows/post-release-binary-regression.yml)
+                should_release="true"
+                break
+                ;;
+            esac
+          done <<< "$files"
+
+          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+          {
+            echo "changed_files<<EOF"
+            echo "$files"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Report decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "should_release=${{ steps.scope.outputs.should_release }}"
+          if [[ "${{ steps.scope.outputs.should_release }}" != "true" ]]; then
+            echo "Docs/metadata-only tag detected; skipping release workflow jobs."
+          fi
+
+  cross-platform-check:
+    needs: preflight-release-scope
+    if: needs.preflight-release-scope.outputs.should_release == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: macos-latest
+          - os: windows-latest
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Run quality gates
+        shell: bash
+        run: ./scripts/quality-gate.sh
+
+  build-macos-artifacts:
+    if: needs.preflight-release-scope.outputs.should_release == 'true'
+    needs: [preflight-release-scope, cross-platform-check]
+    runs-on: macos-latest
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Resolve version
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ github.event.inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build macOS archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          release_version="${{ steps.vars.outputs.version }}"
+          release_version="${release_version#v}"
+          release_commit="$(git rev-parse --short=12 HEAD)"
+          release_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          for goarch in amd64 arm64; do
+            case "$goarch" in
+              amd64) arch_label="x86_64" ;;
+              arm64) arch_label="arm64" ;;
+            esac
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$goarch" go build \
+              -trimpath \
+              -ldflags="-s -w -X main.version=${release_version} -X main.commit=${release_commit} -X main.date=${release_date}" \
+              -o dist/vaultx ./cmd/vaultx
+            tar -C dist -czf "dist/vaultx_Darwin_${arch_label}.tar.gz" vaultx
+            rm -f dist/vaultx
+          done
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vaultx-macos-artifacts
+          path: dist/vaultx_Darwin_*.tar.gz
+
+  build-other-artifacts:
+    if: needs.preflight-release-scope.outputs.should_release == 'true'
+    needs: [preflight-release-scope, cross-platform-check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve version
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ github.event.inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build Linux and Windows archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          release_version="${{ steps.vars.outputs.version }}"
+          release_version="${release_version#v}"
+          release_commit="$(git rev-parse --short=12 HEAD)"
+          release_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          build_archive() {
+            local goos="$1"
+            local goarch="$2"
+            local ext="$3"
+            local os_label arch_label archive_name bin_name
+
+            case "$goos" in
+              linux) os_label="Linux" ;;
+              windows) os_label="Windows" ;;
+            esac
+            case "$goarch" in
+              amd64) arch_label="x86_64" ;;
+              arm64) arch_label="arm64" ;;
+            esac
+
+            bin_name="vaultx"
+            [[ "$goos" == "windows" ]] && bin_name="vaultx.exe"
+
+            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build \
+              -trimpath \
+              -ldflags="-s -w -X main.version=${release_version} -X main.commit=${release_commit} -X main.date=${release_date}" \
+              -o "dist/$bin_name" ./cmd/vaultx
+            archive_name="vaultx_${os_label}_${arch_label}.${ext}"
+
+            if [[ "$ext" == "zip" ]]; then
+              (cd dist && zip -q "$archive_name" "$bin_name")
+            else
+              tar -C dist -czf "dist/$archive_name" "$bin_name"
+            fi
+            rm -f "dist/$bin_name"
+          }
+
+          build_archive linux amd64 tar.gz
+          build_archive linux arm64 tar.gz
+          build_archive windows amd64 zip
+
+      - name: Upload Linux and Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vaultx-other-artifacts
+          path: |
+            dist/vaultx_Linux_*.tar.gz
+            dist/vaultx_Windows_*.zip
+
+  publish-assets-to-homebrew-tap:
+    needs:
+      - preflight-release-scope
+      - build-macos-artifacts
+      - build-other-artifacts
+      - cross-platform-check
+    if: needs.preflight-release-scope.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      TAP_REPO: gautampachnanda101/homebrew-tap
+    steps:
+      - name: Resolve version
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ github.event.inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME}"
+          fi
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version tag: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: vaultx-macos-artifacts
+          path: dist
+
+      - name: Download Linux and Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: vaultx-other-artifacts
+          path: dist
+
+      - name: Generate combined checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum vaultx_*.tar.gz vaultx_*.zip > checksums.txt
+
+      - name: Create or update release in homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN || secrets.PUBLIC_REPO_PUBLISH }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.vars.outputs.version }}"
+          if gh release view "$version" --repo "$TAP_REPO" >/dev/null 2>&1; then
+            echo "Tap release $version already exists; uploading assets."
+          else
+            gh release create "$version" \
+              --repo "$TAP_REPO" \
+              --title "vaultx $version" \
+              --notes "Release assets for vaultx $version"
+          fi
+          gh release upload "$version" \
+            --repo "$TAP_REPO" \
+            --clobber \
+            dist/vaultx_*.tar.gz \
+            dist/vaultx_*.zip \
+            dist/checksums.txt
+
+  release-and-update-tap:
+    needs:
+      - preflight-release-scope
+      - build-macos-artifacts
+      - build-other-artifacts
+      - publish-assets-to-homebrew-tap
+    if: needs.preflight-release-scope.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      TAP_REPO: gautampachnanda101/homebrew-tap
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v5
+
+      - name: Validate tap publish token
+        shell: bash
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN || secrets.PUBLIC_REPO_PUBLISH }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAP_TOKEN}" ]]; then
+            echo "Missing secret: set HOMEBREW_TAP_GITHUB_TOKEN (or PUBLIC_REPO_PUBLISH) to update homebrew-tap." >&2
+            exit 1
+          fi
+
+      - name: Resolve version
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ github.event.inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME}"
+          fi
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version tag: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure source repository release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.vars.outputs.version }}"
+          if gh release view "$version" >/dev/null 2>&1; then
+            echo "Source release $version already exists."
+          else
+            gh release create "$version" --title "$version" --generate-notes
+          fi
+
+      - name: Download tap checksums
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN || secrets.PUBLIC_REPO_PUBLISH }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.vars.outputs.version }}"
+          rm -f /tmp/checksums.txt
+          gh release download "$version" \
+            --repo "$TAP_REPO" \
+            --pattern checksums.txt \
+            --dir /tmp \
+            --clobber
+
+      - name: Generate Homebrew formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.vars.outputs.version }}"
+          base_url="https://github.com/${TAP_REPO}/releases/download/${version}"
+          checksums_file="/tmp/checksums.txt"
+
+          darwin_x86_64_sha=$(awk '/vaultx_Darwin_x86_64.tar.gz/{print $1}' "$checksums_file")
+          darwin_arm64_sha=$(awk '/vaultx_Darwin_arm64.tar.gz/{print $1}' "$checksums_file")
+          linux_x86_64_sha=$(awk '/vaultx_Linux_x86_64.tar.gz/{print $1}' "$checksums_file")
+          linux_arm64_sha=$(awk '/vaultx_Linux_arm64.tar.gz/{print $1}' "$checksums_file")
+
+          for v in "$darwin_x86_64_sha" "$darwin_arm64_sha" "$linux_x86_64_sha" "$linux_arm64_sha"; do
+            if [[ -z "$v" ]]; then
+              echo "Missing expected checksum in checksums.txt" >&2
+              exit 1
+            fi
+          done
+
+          mkdir -p /tmp/formula
+          cat >/tmp/formula/vaultx.rb <<EOF
+          # typed: false
+          # frozen_string_literal: true
+
+          class Vaultx < Formula
+            desc "The convenience of an env file. The power of a zero-trust vault."
+            homepage "https://github.com/${GITHUB_REPOSITORY}"
+            version "${version#v}"
+
+            on_macos do
+              on_intel do
+                url "${base_url}/vaultx_Darwin_x86_64.tar.gz"
+                sha256 "${darwin_x86_64_sha}"
+              end
+
+              on_arm do
+                url "${base_url}/vaultx_Darwin_arm64.tar.gz"
+                sha256 "${darwin_arm64_sha}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                if Hardware::CPU.is_64_bit?
+                  url "${base_url}/vaultx_Linux_x86_64.tar.gz"
+                  sha256 "${linux_x86_64_sha}"
+                end
+              end
+
+              on_arm do
+                if Hardware::CPU.is_64_bit?
+                  url "${base_url}/vaultx_Linux_arm64.tar.gz"
+                  sha256 "${linux_arm64_sha}"
+                end
+              end
+            end
+
+            def install
+              bin.install "vaultx"
+            end
+
+            test do
+              assert_match "zero-trust vault", shell_output("#{bin}/vaultx --help")
+              assert_match "${version#v}", shell_output("#{bin}/vaultx version")
+            end
+          end
+          EOF
+
+      - name: Checkout tap repository
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.TAP_REPO }}
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN || secrets.PUBLIC_REPO_PUBLISH }}
+          path: tap
+
+      - name: Update tap formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tap/Formula
+          cp /tmp/formula/vaultx.rb tap/Formula/vaultx.rb
+
+      - name: Commit and push tap changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/vaultx.rb
+          if git diff --cached --quiet -- Formula/vaultx.rb; then
+            echo "No formula changes detected."
+            exit 0
+          fi
+          git commit -m "chore(formula): update vaultx ${{ steps.vars.outputs.version }}"
+          git push
+
+  update-scoop-bucket:
+    needs:
+      - preflight-release-scope
+      - publish-assets-to-homebrew-tap
+    if: needs.preflight-release-scope.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      TAP_REPO: gautampachnanda101/homebrew-tap
+      SCOOP_BUCKET_REPO: gautampachnanda101/scoop-bucket
+    steps:
+      - name: Resolve version
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ github.event.inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME}"
+          fi
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version tag: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "version_bare=${version#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download tap checksums
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN || secrets.PUBLIC_REPO_PUBLISH }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.vars.outputs.version }}"
+          rm -f /tmp/checksums.txt
+          gh release download "$version" \
+            --repo "$TAP_REPO" \
+            --pattern checksums.txt \
+            --dir /tmp \
+            --clobber
+
+      - name: Generate Scoop manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.vars.outputs.version }}"
+          version_bare="${{ steps.vars.outputs.version_bare }}"
+          base_url="https://github.com/${TAP_REPO}/releases/download/${version}"
+          checksums_file="/tmp/checksums.txt"
+
+          win_x86_64_sha=$(awk '/vaultx_Windows_x86_64.zip/{print $1}' "$checksums_file")
+          if [[ -z "$win_x86_64_sha" ]]; then
+            echo "Missing Windows x86_64 checksum in checksums.txt" >&2
+            exit 1
+          fi
+
+          mkdir -p /tmp/scoop
+          cat >/tmp/scoop/vaultx.json <<EOF
+          {
+            "version": "${version_bare}",
+            "description": "The convenience of an env file. The power of a zero-trust vault.",
+            "homepage": "https://github.com/${GITHUB_REPOSITORY}",
+            "license": "MIT",
+            "architecture": {
+              "64bit": {
+                "url": "${base_url}/vaultx_Windows_x86_64.zip",
+                "hash": "${win_x86_64_sha}"
+              }
+            },
+            "bin": "vaultx.exe",
+            "checkver": {
+              "github": "https://github.com/${TAP_REPO}"
+            },
+            "autoupdate": {
+              "architecture": {
+                "64bit": {
+                  "url": "https://github.com/${TAP_REPO}/releases/download/v\$version/vaultx_Windows_x86_64.zip"
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Checkout scoop bucket
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.SCOOP_BUCKET_REPO }}
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN || secrets.PUBLIC_REPO_PUBLISH }}
+          path: scoop-bucket
+
+      - name: Update scoop manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p scoop-bucket/bucket
+          cp /tmp/scoop/vaultx.json scoop-bucket/bucket/vaultx.json
+
+      - name: Commit and push scoop manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd scoop-bucket
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bucket/vaultx.json
+          if git diff --cached --quiet -- bucket/vaultx.json; then
+            echo "No manifest changes detected."
+            exit 0
+          fi
+          git commit -m "chore(manifest): update vaultx ${{ steps.vars.outputs.version }}"
+          git push

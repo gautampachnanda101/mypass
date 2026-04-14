@@ -1,36 +1,22 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Binaries
+vaultx
+vaultx.exe
+dist/
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
+# Go build cache
+*.test
+*.out
 
-# testing
-/coverage
-
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
+# macOS
 .DS_Store
-*.pem
 
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
 
-# local env files
-.env*.local
-.env
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
+# Runtime secrets — never commit these
+~/.vaultx/
+daemon.token
+vault.enc
