@@ -247,6 +247,7 @@ jobs:
           path: |
             dist/vaultx_Linux_*.tar.gz
             dist/vaultx_Windows_*.zip
+            dist/VAULTX_USER_GUIDE.md
 
   publish-assets-to-homebrew-tap:
     needs:
