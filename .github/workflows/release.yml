@@ -457,6 +457,7 @@ jobs:
 
             def install
               bin.install "vaultx"
+              pkgshare.install "VAULTX_USER_GUIDE.md"
             end
 
             test do

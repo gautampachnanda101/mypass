@@ -338,5 +338,3 @@ go build ./cmd/vaultx
 
 See [SPEC.md](SPEC.md) for the full product specification and [AGENTS.md](AGENTS.md)
 for coding agent context.
-
-For planned (not yet implemented) features, see [roadmap.md](roadmap.md).

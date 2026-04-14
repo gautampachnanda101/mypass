@@ -372,8 +372,6 @@ vaultx version                       Print version
 
 Global flags: `--config <path>`, `--env <vaultx.env path>`, `--color auto|always|never`, `--emoji auto|always|never`
 
-For planned (not yet implemented) features, see [../roadmap.md](../roadmap.md).
-
 ---
 
 ## Troubleshooting

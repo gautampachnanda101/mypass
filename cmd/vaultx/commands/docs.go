@@ -1,6 +1,7 @@
 package commands
 
 import (
+	_ "embed"
 	"fmt"
 	"io"
 	"os"
@@ -12,20 +13,22 @@ import (
 
 const publicGuideFile = "VAULTX_USER_GUIDE.md"
 
-func cmdDocs() *cobra.Command {
-	var guidePath string
+// embeddedPublicGuide is bundled into the binary so `vaultx docs` works even
+// when the guide file is not present on disk (for example in restricted installs).
+//go:embed VAULTX_USER_GUIDE.md
+var embeddedPublicGuide string
 
+func cmdDocs() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "docs",
 		Short: "Pretty-print the public user guide shipped with the binary",
 		Long: "Render the public vaultx user guide in your terminal with readable\n" +
 			"headings and code blocks. By default, vaultx looks for " + publicGuideFile + "\n" +
-			"next to the running binary, then in the current directory.\n\n" +
-			"Use --file to print a specific guide file.",
-		Example: "  vaultx docs\n" +
-			"  vaultx docs --file ./VAULTX_USER_GUIDE.md",
+			"next to the running binary and standard package doc paths. If not found,\n" +
+			"it falls back to the embedded copy bundled in the binary.",
+		Example: "  vaultx docs",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			path, body, err := loadPublicGuide(guidePath)
+			path, body, err := loadPublicGuide()
 			if err != nil {
 				return err
 			}
@@ -36,32 +39,25 @@ func cmdDocs() *cobra.Command {
 			return nil
 		},
 	}
-
-	cmd.Flags().StringVarP(&guidePath, "file", "f", "", "path to a markdown guide file")
 	return cmd
 }
 
-func loadPublicGuide(override string) (string, []byte, error) {
-	if strings.TrimSpace(override) != "" {
-		b, err := os.ReadFile(override)
-		if err != nil {
-			return "", nil, fmt.Errorf("read guide %s: %w", override, err)
-		}
-		return override, b, nil
-	}
-
+func loadPublicGuide() (string, []byte, error) {
 	var candidates []string
 	if exe, err := os.Executable(); err == nil {
 		if real, err := filepath.EvalSymlinks(exe); err == nil {
 			exe = real
 		}
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), publicGuideFile))
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(exeDir, publicGuideFile),
+			// Homebrew cellar installs docs under share/vaultx.
+			filepath.Join(exeDir, "..", "share", "vaultx", publicGuideFile),
+			filepath.Join(exeDir, "..", "..", "share", "vaultx", publicGuideFile),
+		)
 	}
 	if cwd, err := os.Getwd(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(cwd, publicGuideFile),
-			filepath.Join(cwd, "docs", "user-guide.md"),
-		)
+		candidates = append(candidates, filepath.Join(cwd, publicGuideFile))
 	}
 
 	for _, p := range candidates {
@@ -70,7 +66,11 @@ func loadPublicGuide(override string) (string, []byte, error) {
 		}
 	}
 
-	return "", nil, fmt.Errorf("could not find %s near the binary or in the current directory (try: vaultx docs --file /path/to/%s)", publicGuideFile, publicGuideFile)
+	if strings.TrimSpace(embeddedPublicGuide) != "" {
+		return "embedded:VAULTX_USER_GUIDE.md", []byte(embeddedPublicGuide), nil
+	}
+
+	return "", nil, fmt.Errorf("could not find %s and no embedded fallback is available", publicGuideFile)
 }
 
 func renderMarkdownPretty(w io.Writer, body string, ux terminalUX) {
