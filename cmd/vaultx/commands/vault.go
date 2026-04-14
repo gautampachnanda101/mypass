@@ -18,6 +18,8 @@ func cmdInit() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
 		Short: "Create a new local vault",
+		Long:  "Create a new local vault at ~/.vaultx/vault.enc encrypted with AES-256-GCM.\nYou will be prompted to choose a master password. The password is never stored —\nArgon2id derives a barrier key that wraps the encryption key in memory only.",
+		Example: `  vaultx init`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load(globalFlags.configPath)
 			if err != nil {
@@ -56,8 +58,10 @@ func cmdInit() *cobra.Command {
 
 func cmdUnlock() *cobra.Command {
 	return &cobra.Command{
-		Use:   "unlock",
-		Short: "Unlock the vault (cache key for this session)",
+		Use:     "unlock",
+		Short:   "Unlock the vault (cache key for this session)",
+		Long:    "Prompt for the master password and cache the derived key for this session.\nThe vault remains unlocked until 'vaultx lock' is called or the process exits.",
+		Example: `  vaultx unlock`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return requireUnlocked()
 		},
@@ -66,8 +70,10 @@ func cmdUnlock() *cobra.Command {
 
 func cmdLock() *cobra.Command {
 	return &cobra.Command{
-		Use:   "lock",
-		Short: "Lock the vault (clear cached key)",
+		Use:     "lock",
+		Short:   "Lock the vault (clear cached key)",
+		Long:    "Zero and clear the encryption key from memory. Subsequent commands that need\nthe vault will prompt for the master password again.",
+		Example: `  vaultx lock`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			state.vault.Lock()
 			fmt.Fprintln(os.Stderr, "Vault locked.")
@@ -80,7 +86,10 @@ func cmdGet() *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <path>",
 		Short: "Get a secret value",
-		Args:  cobra.ExactArgs(1),
+		Long:  "Retrieve a single secret value from the vault and print it to stdout.\nThe value is printed without a trailing newline so it can be safely captured\nin scripts: TOKEN=$(vaultx get myapp/api_key)",
+		Example: `  vaultx get myapp/db_password
+  TOKEN=$(vaultx get myapp/api_key)`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := requireUnlocked(); err != nil {
 				return err
@@ -99,7 +108,13 @@ func cmdSet() *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <path> <value>",
 		Short: "Store a secret in the local vault",
-		Args:  cobra.ExactArgs(2),
+		Long: "Store a secret at the given path. Paths are hierarchical with '/' as separator.\n" +
+			"The value is encrypted with AES-256-GCM and stored in ~/.vaultx/vault.enc.\n" +
+			"An existing entry at the same path is overwritten.",
+		Example: `  vaultx set myapp/db_password "s3cr3t"
+  vaultx set myapp/api_key "sk-live-abc123"
+  vaultx set infra/prod/redis-url "redis://..."`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := requireUnlocked(); err != nil {
 				return err
@@ -115,9 +130,11 @@ func cmdSet() *cobra.Command {
 
 func cmdDelete() *cobra.Command {
 	return &cobra.Command{
-		Use:   "delete <path>",
-		Short: "Delete a secret from the local vault",
-		Args:  cobra.ExactArgs(1),
+		Use:     "delete <path>",
+		Short:   "Delete a secret from the local vault",
+		Long:    "Permanently remove a secret from the vault. This operation cannot be undone.\nConsider running 'vaultx export -f vaultx -o backup.json' before bulk deletions.",
+		Example: `  vaultx delete myapp/db_password`,
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := requireUnlocked(); err != nil {
 				return err
@@ -135,7 +152,11 @@ func cmdList() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list [prefix]",
 		Short: "List secrets (values masked)",
-		Args:  cobra.MaximumNArgs(1),
+		Long:  "List all secrets stored in the vault. Values are always masked — only paths,\nprovider names, and last-updated timestamps are shown. Safe to share or log.",
+		Example: `  vaultx list                  # all secrets
+  vaultx list myapp/           # secrets under myapp/
+  vaultx list infra/prod/`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := requireUnlocked(); err != nil {
 				return err
@@ -170,6 +191,8 @@ func cmdProviders() *cobra.Command {
 	return &cobra.Command{
 		Use:   "providers",
 		Short: "List configured providers and their health",
+		Long:  "List all providers configured in ~/.vaultx/config.toml and check their health.\nThe local vault reports 'sealed' if locked; 1Password reports health via the op CLI.",
+		Example: `  vaultx providers`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := context.Background()
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -198,7 +221,19 @@ func cmdVersion() *cobra.Command {
 		Use:   "version",
 		Short: "Print version",
 		Run: func(cmd *cobra.Command, _ []string) {
-			fmt.Println("vaultx dev")
+			v := buildInfo.version
+			if v == "" {
+				v = "dev"
+			}
+			c := buildInfo.commit
+			if c == "" {
+				c = "none"
+			}
+			d := buildInfo.date
+			if d == "" {
+				d = "unknown"
+			}
+			fmt.Printf("vaultx %s (commit %s, built %s)\n", v, c, d)
 		},
 	}
 }
@@ -208,6 +243,9 @@ func cmdShell() *cobra.Command {
 	return &cobra.Command{
 		Use:   "shell",
 		Short: "Print export statements (eval $(vaultx shell))",
+		Long:  "Resolve vaultx.env and print 'export KEY=VALUE' lines to stdout.\nDesigned to be eval'd in the current shell so secrets are available\nto subsequent commands in the same session.",
+		Example: `  eval $(vaultx shell)
+  eval $(vaultx shell --env staging.env)`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := requireUnlocked(); err != nil {
 				return err

@@ -36,10 +36,23 @@ func resolveEnvFile() (map[string]string, error) {
 
 func cmdRun() *cobra.Command {
 	return &cobra.Command{
-		Use:                "run -- <cmd> [args...]",
-		Short:              "Resolve vaultx.env and exec a command with secrets injected",
+		Use:   "run -- <cmd> [args...]",
+		Short: "Resolve vaultx.env and exec a command with secrets injected",
+		Long: "Resolve vault: references in vaultx.env and exec the given command with\n" +
+			"secrets injected into its environment. Uses syscall.Exec so the child\n" +
+			"replaces the vaultx process — secrets exist only in process memory.\n\n" +
+			"Plain values (no vault: prefix) pass through unchanged.\n" +
+			"vaultx.env is auto-detected; override with --env.",
+		Example: `  vaultx run -- npm start
+  vaultx run -- go run ./cmd/server
+  vaultx run -- python manage.py runserver
+  vaultx run --env staging.env -- ./server`,
 		DisableFlagParsing: true, // everything after -- goes to the child
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Allow --help / -h even with DisableFlagParsing.
+			if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+				return cmd.Help()
+			}
 			// Strip leading "--" if present.
 			if len(args) > 0 && args[0] == "--" {
 				args = args[1:]
@@ -79,19 +92,22 @@ func cmdImport() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "import <file>",
 		Short: "Import credentials from an external password manager",
-		Long: `Import credentials from a CSV or JSON export.
-
-Supported formats (auto-detected if --format omitted):
-  google     Google Password Manager CSV
-  1password  1Password CSV
-  bitwarden  Bitwarden JSON
-  lastpass   LastPass CSV
-  samsung    Samsung Pass CSV
-  mcafee     McAfee True Key CSV
-  dashlane   Dashlane CSV
-  keeper     Keeper CSV
-  csv        Generic CSV
-  vaultx     vaultx JSON backup`,
+		Long: "Import credentials from a CSV or JSON export into the local vault.\n" +
+			"The format is auto-detected from the file header; use --format to override.\n\n" +
+			"Supported formats:\n" +
+			"  google     Google Password Manager CSV\n" +
+			"  1password  1Password CSV\n" +
+			"  bitwarden  Bitwarden / Vaultwarden JSON\n" +
+			"  lastpass   LastPass CSV\n" +
+			"  samsung    Samsung Pass CSV\n" +
+			"  mcafee     McAfee True Key CSV\n" +
+			"  dashlane   Dashlane CSV\n" +
+			"  keeper     Keeper CSV\n" +
+			"  csv        Generic CSV (name/username/password/url)\n" +
+			"  vaultx     vaultx JSON backup (lossless round-trip)",
+		Example: `  vaultx import ~/Downloads/bitwarden-export.json
+  vaultx import ~/Downloads/google-passwords.csv
+  vaultx import ~/Downloads/export.csv --format 1password`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := requireUnlocked(); err != nil {
@@ -146,6 +162,12 @@ func cmdExport() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export credentials to a file",
+		Long: "Export all secrets from the local vault to a file.\n" +
+			"Use 'vaultx' format for a lossless backup; 'bitwarden' or 'csv' for migration.\n\n" +
+			"Supported formats: vaultx, csv, bitwarden",
+		Example: `  vaultx export -f vaultx -o backup.json       # full lossless backup
+  vaultx export -f bitwarden -o bw-backup.json
+  vaultx export -f csv -o secrets.csv`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := requireUnlocked(); err != nil {
 				return err

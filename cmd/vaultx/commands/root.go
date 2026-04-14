@@ -12,6 +12,20 @@ import (
 	"github.com/gautampachnanda101/vaultx/internal/resolver"
 )
 
+// buildInfo is injected from main via SetBuildInfo.
+var buildInfo struct {
+	version string
+	commit  string
+	date    string
+}
+
+// SetBuildInfo is called from main() to pass in ldflags values.
+func SetBuildInfo(version, commit, date string) {
+	buildInfo.version = version
+	buildInfo.commit = commit
+	buildInfo.date = date
+}
+
 // globalFlags are shared across all subcommands.
 var globalFlags struct {
 	configPath string

@@ -9,10 +9,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	esoNamespace   = "external-secrets"
+	vaultxTokenKey = "vaultx-token"
+)
+
 func cmdK3d() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "k3d",
 		Short: "Helpers for k3d / Kubernetes External Secrets integration",
+		Long: "Manage the External Secrets Operator (ESO) integration for k3d clusters.\n" +
+			"ESO calls the vaultx daemon webhook at deploy time to resolve secrets —\n" +
+			"no secrets in manifests, no env files in containers.",
+		Example: `  vaultx k3d setup              # install ESO + create SecretStore
+  vaultx k3d setup --cluster-wide
+  vaultx k3d token              # refresh token after daemon restart
+  vaultx k3d status             # check ESO / SecretStore health`,
 	}
 	cmd.AddCommand(cmdK3dSetup(), cmdK3dToken(), cmdK3dStatus())
 	return cmd
@@ -37,13 +49,13 @@ The vaultx daemon must be running (vaultx serve --port <port>).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// 1. Install ESO via helm (idempotent).
 			fmt.Fprintln(os.Stderr, "→ Installing External Secrets Operator...")
-			if err := runCmd("helm", "repo", "add", "external-secrets",
+			if err := runCmd("helm", "repo", "add", esoNamespace,
 				"https://charts.external-secrets.io"); err != nil {
 				return fmt.Errorf("helm repo add: %w", err)
 			}
-			if err := runCmd("helm", "upgrade", "--install", "external-secrets",
-				"external-secrets/external-secrets",
-				"-n", "external-secrets", "--create-namespace",
+			if err := runCmd("helm", "upgrade", "--install", esoNamespace,
+				esoNamespace+"/"+esoNamespace,
+				"-n", esoNamespace, "--create-namespace",
 				"--wait"); err != nil {
 				return fmt.Errorf("helm install ESO: %w", err)
 			}
@@ -53,15 +65,15 @@ The vaultx daemon must be running (vaultx serve --port <port>).`,
 			if _, err := os.Stat(tokenPath); err != nil {
 				return fmt.Errorf("daemon token not found at %s — run: vaultx serve", tokenPath)
 			}
-			tokenNS := "external-secrets"
+			tokenNS := esoNamespace
 			if !clusterWide {
 				tokenNS = namespace
 			}
 			fmt.Fprintln(os.Stderr, "→ Creating vaultx-token secret...")
 			// Delete existing (ignore error) then create fresh.
-			_ = runCmd("kubectl", "delete", "secret", "vaultx-token",
+			_ = runCmd("kubectl", "delete", "secret", vaultxTokenKey,
 				"-n", tokenNS, "--ignore-not-found")
-			if err := runCmd("kubectl", "create", "secret", "generic", "vaultx-token",
+			if err := runCmd("kubectl", "create", "secret", "generic", vaultxTokenKey,
 				"-n", tokenNS,
 				"--from-file=token="+tokenPath); err != nil {
 				return fmt.Errorf("create token secret: %w", err)
@@ -112,14 +124,14 @@ func cmdK3dToken() *cobra.Command {
 			if _, err := os.Stat(tokenPath); err != nil {
 				return fmt.Errorf("daemon token not found — run: vaultx serve")
 			}
-			_ = runCmd("kubectl", "delete", "secret", "vaultx-token",
+			_ = runCmd("kubectl", "delete", "secret", vaultxTokenKey,
 				"-n", namespace, "--ignore-not-found")
-			if err := runCmd("kubectl", "create", "secret", "generic", "vaultx-token",
+			if err := runCmd("kubectl", "create", "secret", "generic", vaultxTokenKey,
 				"-n", namespace,
 				"--from-file=token="+tokenPath); err != nil {
 				return fmt.Errorf("refresh token secret: %w", err)
 			}
-			fmt.Fprintf(os.Stderr, "✓ vaultx-token refreshed in namespace %q\n", namespace)
+			fmt.Fprintf(os.Stderr, "✓ %s refreshed in namespace %q\n", vaultxTokenKey, namespace)
 			return nil
 		},
 	}
