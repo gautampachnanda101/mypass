@@ -14,5 +14,8 @@ func BiometricAvailable() (bool, string) { return false, "biometric unlock not a
 // BiometricConfigured always returns false on Linux.
 func BiometricConfigured() bool { return false }
 
+// BiometricEntryExists always returns false on Linux.
+func BiometricEntryExists() bool { return false }
+
 // Clear is a no-op on Linux.
 func Clear() {}

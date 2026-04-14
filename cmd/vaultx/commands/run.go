@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -41,29 +42,39 @@ func cmdRun() *cobra.Command {
 		Long: "Resolve vault: references in vaultx.env and exec the given command with\n" +
 			"secrets injected into its environment. Uses syscall.Exec so the child\n" +
 			"replaces the vaultx process — secrets exist only in process memory.\n\n" +
+			"IMPORTANT: vaultx always runs the command from your CURRENT directory.\n" +
+			"Change into your project directory before running:\n\n" +
+			"  cd ~/projects/my-app\n" +
+			"  vaultx run -- npm start\n\n" +
+			"vaultx.env lookup order (first found wins):\n" +
+			"  ./vaultx.env\n" +
+			"  ./.vaultx.env\n" +
+			"  ~/.vaultx/default.env\n\n" +
 			"Plain values (no vault: prefix) pass through unchanged.\n" +
-			"vaultx.env is auto-detected; override with --env.",
-		Example: `  vaultx run -- npm start
-  vaultx run -- go run ./cmd/server
-  vaultx run -- python manage.py runserver
-  vaultx run --env staging.env -- ./server`,
+			"Override the env file with the global --env flag.",
+		Example: "  cd ~/projects/my-app && vaultx run -- npm start\n" +
+			"  cd ~/projects/api    && vaultx run -- go run ./cmd/server\n" +
+			"  vaultx --env staging.env run -- ./server",
 		DisableFlagParsing: true, // everything after -- goes to the child
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Allow --help / -h even with DisableFlagParsing.
 			if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 				return cmd.Help()
 			}
-			// Strip leading "--" if present.
+			// Strip leading "--" separator if present.
 			if len(args) > 0 && args[0] == "--" {
 				args = args[1:]
 			}
 			if len(args) == 0 {
-				return fmt.Errorf("usage: vaultx run -- <cmd> [args...]")
+				return fmt.Errorf("no command given — usage: vaultx run -- <cmd> [args...]")
 			}
 
 			if err := requireUnlocked(); err != nil {
 				return err
 			}
+
+			// Warn early if no vaultx.env will be used — avoids confusing child errors.
+			warnIfNoEnvFile(cmd)
 
 			resolved, err := resolveEnvFile()
 			if err != nil {
@@ -79,11 +90,37 @@ func cmdRun() *cobra.Command {
 			// exec replaces the current process — secrets only ever live in memory.
 			binary, err := exec.LookPath(args[0])
 			if err != nil {
-				return fmt.Errorf("command not found: %s", args[0])
+				return fmt.Errorf("%q not found in PATH — is it installed?", args[0])
 			}
 			return syscall.Exec(binary, args, childEnv)
 		},
 	}
+}
+
+// warnIfNoEnvFile prints a diagnostic when no vaultx.env will be used.
+// This surfaces the most common mistake (wrong CWD) before the child process runs.
+func warnIfNoEnvFile(cmd *cobra.Command) {
+	if globalFlags.envFile != "" {
+		return // explicit --env flag set, nothing to warn about
+	}
+	cwd, _ := os.Getwd()
+	for _, name := range []string{"vaultx.env", ".vaultx.env"} {
+		if _, err := os.Stat(filepath.Join(cwd, name)); err == nil {
+			return // found one
+		}
+	}
+	// Check ~/.vaultx/default.env too.
+	if home, err := os.UserHomeDir(); err == nil {
+		if _, err := os.Stat(filepath.Join(home, ".vaultx", "default.env")); err == nil {
+			return
+		}
+	}
+	ux := uxFor(cmd)
+	warn := icon(ux.Emoji, "warn")
+	info := icon(ux.Emoji, "info")
+	fmt.Fprintf(os.Stderr, "%s  No vaultx.env found in %s\n", warn, cwd)
+	fmt.Fprintf(os.Stderr, "%s  Secrets will not be injected. Are you in the right directory?\n", info)
+	fmt.Fprintf(os.Stderr, "%s  Create one: echo 'MY_KEY=vault:local/myapp/key' > vaultx.env\n\n", info)
 }
 
 func cmdImport() *cobra.Command {

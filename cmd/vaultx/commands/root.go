@@ -242,7 +242,7 @@ func groupedHelpCommands(cmd *cobra.Command) string {
 		Names []string
 	}
 	groups := []group{
-		{Title: "Vault", Names: []string{"init", "unlock", "lock"}},
+		{Title: "Vault", Names: []string{"init", "unlock", "lock", "doctor"}},
 		{Title: "Secrets", Names: []string{"get", "set", "delete", "list"}},
 		{Title: "Inject", Names: []string{"run", "shell"}},
 		{Title: "Infrastructure", Names: []string{"serve", "docker", "k3d"}},
@@ -258,7 +258,7 @@ func groupedHelpCommands(cmd *cobra.Command) string {
 
 	const namePad = 20
 	var b strings.Builder
-	for _, g := range groups {
+	for gi, g := range groups {
 		written := 0
 		for _, name := range g.Names {
 			c, ok := lookup[name]
@@ -266,11 +266,14 @@ func groupedHelpCommands(cmd *cobra.Command) string {
 				continue
 			}
 			if written == 0 {
+				if gi > 0 {
+					b.WriteByte('\n') // blank line between groups
+				}
 				b.WriteString("  ")
 				b.WriteString(groupTitleDecorated(g.Title, useColor, useEmoji))
 				b.WriteByte('\n')
 			}
-			b.WriteString("  ")
+			b.WriteString("    ") // 4-space indent under group title
 			b.WriteString(style(useColor, ansiGreen, padRight(c.Name(), namePad)))
 			b.WriteByte(' ')
 			b.WriteString(style(useColor, ansiDim, c.Short))
@@ -297,10 +300,11 @@ func contextualHelpGuide(cmd *cobra.Command) string {
 	switch {
 	case path == "vaultx":
 		return strings.TrimSpace(`- First time: vaultx init --biometric
+- Health check: vaultx doctor
 - Store a secret: vaultx set myapp/db_password "s3cr3t"
-- Run your app: vaultx run -- npm start
+- Run your app (from project dir): cd ~/my-app && vaultx run -- npm start
 - Inject into current shell: eval $(vaultx shell)
-- Health check: vaultx providers`)
+- Install tab completion: vaultx completion`)
 	case strings.HasSuffix(path, "init"):
 		return strings.TrimSpace(`- Enable Touch ID on macOS: vaultx init --biometric
 - Next — store your first secret: vaultx set myapp/api_key "value"
@@ -356,6 +360,11 @@ func contextualHelpGuide(cmd *cobra.Command) string {
 - Force a specific shell: vaultx completion zsh
 - Replace outdated file: vaultx completion --overwrite
 - Reload without restarting: source ~/.zshrc  (or ~/.bashrc)`)
+	case strings.HasSuffix(path, "doctor"):
+		return strings.TrimSpace(`- Full check: vaultx doctor
+- Auto-fix issues: vaultx doctor --fix
+- Machine-readable output: vaultx doctor --json
+- After fixing: re-run vaultx doctor to confirm`)
 	default:
 		return ""
 	}
@@ -448,8 +457,11 @@ Troubleshooting:
 	exp.GroupID = "data"
 	prov.GroupID = "data"
 
+	doctor := cmdDoctor()
+	doctor.GroupID = "vault"
+
 	root.AddCommand(
-		initCmd, unlock, lock,
+		initCmd, unlock, lock, doctor,
 		get, set, del, list,
 		run, shell,
 		serve, docker, k3d,

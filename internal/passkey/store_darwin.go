@@ -78,6 +78,17 @@ func BiometricConfigured() bool {
 	return ok
 }
 
+// BiometricEntryExists is a fast non-blocking check that returns true when the
+// biometric keychain entry is present. Unlike BiometricConfigured it does NOT
+// retrieve the password, so it never triggers a Touch ID / ACL prompt.
+func BiometricEntryExists() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), keychainTimeout)
+	defer cancel()
+	err := exec.CommandContext(ctx, "security",
+		"find-generic-password", "-s", keychainServiceBiometric, "-a", keychainAccount).Run()
+	return err == nil
+}
+
 // Clear removes both keychain entries (plain and biometric).
 func Clear() {
 	_ = deleteKeychainService(keychainService)
