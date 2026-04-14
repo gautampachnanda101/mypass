@@ -36,6 +36,7 @@ vaultx delete <path>                 # delete a secret
 vaultx run -- <cmd>                  # resolve vaultx.env and exec
 vaultx run --env staging.env -- <cmd>
 eval $(vaultx shell)                 # inject into current shell
+vaultx docs                          # pretty-print shipped public user guide
 ```
 
 ## Docker and Kubernetes

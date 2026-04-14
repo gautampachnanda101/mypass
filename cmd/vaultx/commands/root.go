@@ -246,7 +246,7 @@ func groupedHelpCommands(cmd *cobra.Command) string {
 		{Title: "Secrets", Names: []string{"get", "set", "delete", "list"}},
 		{Title: "Inject", Names: []string{"run", "shell"}},
 		{Title: "Infrastructure", Names: []string{"serve", "docker", "k3d"}},
-		{Title: "Data", Names: []string{"import", "export", "providers", "version", "completion"}},
+		{Title: "Data", Names: []string{"import", "export", "providers", "docs", "version", "completion"}},
 	}
 
 	lookup := map[string]*cobra.Command{}
@@ -360,6 +360,10 @@ func contextualHelpGuide(cmd *cobra.Command) string {
 - Force a specific shell: vaultx completion zsh
 - Replace outdated file: vaultx completion --overwrite
 - Reload without restarting: source ~/.zshrc  (or ~/.bashrc)`)
+	case strings.HasSuffix(path, "docs"):
+		return strings.TrimSpace(`- Print shipped public guide: vaultx docs
+- Render an explicit file: vaultx docs --file ./VAULTX_USER_GUIDE.md
+- Read command-level help: vaultx docs --help`)
 	case strings.HasSuffix(path, "doctor"):
 		return strings.TrimSpace(`- Full check: vaultx doctor
 - Auto-fix issues: vaultx doctor --fix
@@ -387,6 +391,7 @@ Quick start:
   vaultx init --biometric       Create vault + enable Touch ID
   vaultx set myapp/db_pass s3cr3t    Store a secret
   vaultx run -- npm start            Resolve vaultx.env and run your app
+	vaultx docs                        Read the shipped public user guide
   eval $(vaultx shell)               Inject secrets into current shell
 
 Configuration:
@@ -395,13 +400,14 @@ Configuration:
   vaultx.env              Secret reference file — commit this
 
 Troubleshooting:
+  vaultx docs         Read the shipped public guide in terminal
   vaultx providers    Check all configured providers and health
   vaultx version      Show version`),
-		Example: "  vaultx init --biometric\n  vaultx set myapp/db_password \"s3cr3t\"\n  vaultx run -- npm start\n  eval $(vaultx shell)\n  vaultx providers",
+		Example: "  vaultx init --biometric\n  vaultx set myapp/db_password \"s3cr3t\"\n  vaultx run -- npm start\n  vaultx docs\n  eval $(vaultx shell)\n  vaultx providers",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			skip := map[string]bool{"init": true, "help": true, "version": true}
+			skip := map[string]bool{"init": true, "help": true, "version": true, "docs": true}
 			if skip[cmd.Name()] {
 				return nil
 			}
@@ -453,9 +459,11 @@ Troubleshooting:
 	imp := cmdImport()
 	exp := cmdExport()
 	prov := cmdProviders()
+	docs := cmdDocs()
 	imp.GroupID = "data"
 	exp.GroupID = "data"
 	prov.GroupID = "data"
+	docs.GroupID = "data"
 
 	doctor := cmdDoctor()
 	doctor.GroupID = "vault"
@@ -465,7 +473,7 @@ Troubleshooting:
 		get, set, del, list,
 		run, shell,
 		serve, docker, k3d,
-		imp, exp, prov,
+		imp, exp, prov, docs,
 		cmdVersion(),
 		cmdCompletion(),
 	)

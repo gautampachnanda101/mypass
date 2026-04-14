@@ -122,6 +122,7 @@ Rotating the master password re-wraps the EK only — entries are never re-encry
 vaultx --help
 vaultx run --help
 vaultx doctor
+vaultx docs
 vaultx completion
 ```
 
@@ -145,6 +146,7 @@ vaultx import [--format f] <file>    Import from external password manager
 vaultx export [--format f] [-o file] Export to file
 
 vaultx providers                     List configured providers + health
+vaultx docs                          Pretty-print the public user guide
 vaultx completion [shell]            Install shell completion
 vaultx version                       Print version
 

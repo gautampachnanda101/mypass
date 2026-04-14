@@ -285,6 +285,7 @@ vaultx import [--format f] <file>    Import from a password manager export
 vaultx export [--format f] [-o file] Export to file
 
 vaultx providers                     List configured providers and health
+vaultx docs                          Pretty-print the public user guide
 vaultx completion [shell]            Install shell completion
 
 vaultx serve [--port N] [--max-memory MiB]
