@@ -215,6 +215,7 @@ No secrets in manifests. No env files in containers. Vault access controls who c
 | `GET /v1/secret?path=<path>` | GET | Token | Resolve single secret |
 | `POST /v1/resolve` | POST | Token | Resolve vaultx.env body |
 | `GET /v1/list?prefix=<prefix>` | GET | Token | List secrets (values masked) |
+| `GET /v1/audit?limit=<n>` | GET | Token | Retrieve audit log (default 100, max 1000) |
 | `GET /externalsecrets/<key>` | GET | Token | ESO webhook endpoint |
 | `GET /` | GET | None | Web UI (Touch ID auth required) |
 

@@ -102,6 +102,24 @@ func (a *AuditLogger) Log(event AuditEvent) {
 	}
 }
 
+// GetEvents returns a copy of recent audit events (most recent first).
+func (a *AuditLogger) GetEvents(limit int) []AuditEvent {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	
+	// Return most recent events first
+	start := len(a.events) - limit
+	if start < 0 {
+		start = 0
+	}
+	
+	events := make([]AuditEvent, len(a.events)-start)
+	for i := range events {
+		events[len(events)-1-i] = a.events[start+i]
+	}
+	return events
+}
+
 // New creates a daemon server on the given port.
 // The session token is generated randomly and written to ~/.vaultx/daemon.token.
 func New(registry *resolver.Registry, port int) (*Server, error) {
@@ -167,6 +185,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/v1/secret", s.auth(s.rateLimit(s.handleGetSecret)))
 	mux.HandleFunc("/v1/resolve", s.auth(s.rateLimit(s.handleResolve)))
 	mux.HandleFunc("/v1/list", s.auth(s.rateLimit(s.handleList)))
+	mux.HandleFunc("/v1/audit", s.auth(s.rateLimit(s.handleAuditLog)))
 	// External Secrets Operator webhook — path variable extracted manually.
 	mux.HandleFunc("/externalsecrets/", s.auth(s.rateLimit(s.handleExternalSecrets)))
 	// Web UI — no auth required initially, JS will authenticate via Touch ID
@@ -410,6 +429,25 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		Success:    true,
 	})
 	writeJSON(w, http.StatusOK, secrets)
+}
+
+// handleAuditLog returns recent audit events.
+// GET /v1/audit?limit=100
+func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, errMethodGET)
+		return
+	}
+
+	limit := 100
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if n, err := fmt.Sscanf(limitStr, "%d", &limit); err != nil || n != 1 || limit < 1 || limit > 1000 {
+			limit = 100
+		}
+	}
+
+	events := s.auditLog.GetEvents(limit)
+	writeJSON(w, http.StatusOK, events)
 }
 
 // handleExternalSecrets implements the External Secrets Operator webhook protocol.

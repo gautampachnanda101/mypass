@@ -28,6 +28,12 @@ const api = {
             headers: this.headers
         });
         if (!response.ok) {
+            if (response.status === 401) {
+                // Token expired or server restarted - clear and re-authenticate
+                TOKEN = null;
+                sessionStorage.removeItem('vaultx_token');
+                throw new Error('Session expired - please refresh the page');
+            }
             throw new Error(`Failed to list secrets: ${response.statusText}`);
         }
         return response.json();
@@ -38,6 +44,11 @@ const api = {
             headers: this.headers
         });
         if (!response.ok) {
+            if (response.status === 401) {
+                TOKEN = null;
+                sessionStorage.removeItem('vaultx_token');
+                throw new Error('Session expired - please refresh the page');
+            }
             throw new Error(`Failed to get secret: ${response.statusText}`);
         }
         return response.json();
@@ -50,8 +61,28 @@ const api = {
             body: envContent
         });
         if (!response.ok) {
+            if (response.status === 401) {
+                TOKEN = null;
+                sessionStorage.removeItem('vaultx_token');
+                throw new Error('Session expired - please refresh the page');
+            }
             const error = await response.json();
             throw new Error(error.error || 'Failed to resolve env file');
+        }
+        return response.json();
+    },
+
+    async getAuditLog(limit = 100) {
+        const response = await fetch(`/v1/audit?limit=${limit}`, {
+            headers: this.headers
+        });
+        if (!response.ok) {
+            if (response.status === 401) {
+                TOKEN = null;
+                sessionStorage.removeItem('vaultx_token');
+                throw new Error('Session expired - please refresh the page');
+            }
+            throw new Error(`Failed to get audit log: ${response.statusText}`);
         }
         return response.json();
     }
@@ -96,6 +127,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initTabs();
     initSecrets();
     initResolve();
+    initAudit();
     initModal();
 });
 
@@ -198,12 +230,17 @@ async function loadSecrets() {
         state.secrets = Array.isArray(secrets) ? secrets : [];
         filterAndRenderSecrets();
     } catch (error) {
+        const isSessionExpired = error.message.includes('Session expired');
+        const actionButton = isSessionExpired 
+            ? '<button class="btn btn-primary" onclick="location.reload()">🔄 Refresh Page</button>'
+            : '<button class="btn btn-primary" onclick="loadSecrets()">Retry</button>';
+        
         elements.secretsList.innerHTML = `
             <div class="empty-state">
                 <h3>⚠️ Failed to Load Secrets</h3>
                 <p>${escapeHtml(error.message)}</p>
                 <p style="margin-top: 1rem;">
-                    <button class="btn btn-primary" onclick="loadSecrets()">Retry</button>
+                    ${actionButton}
                 </p>
             </div>
         `;
@@ -336,6 +373,92 @@ async function resolveEnvFile() {
 
 function copyResolvedContent() {
     copyToClipboard(elements.resolvedContent.textContent);
+}
+
+// Audit Log Management
+function initAudit() {
+    // Tab switching to audit will trigger load
+    elements.tabs.forEach(tab => {
+        if (tab.dataset.tab === 'audit') {
+            tab.addEventListener('click', loadAuditLog);
+        }
+    });
+}
+
+async function loadAuditLog() {
+    const auditLogElement = document.getElementById('audit-log');
+    if (!auditLogElement) return;
+
+    try {
+        auditLogElement.innerHTML = '<div class="loading">Loading audit events...</div>';
+        const events = await api.getAuditLog(100);
+        
+        if (!events || events.length === 0) {
+            auditLogElement.innerHTML = `
+                <div class="empty-state">
+                    <h3>📝 No Audit Events Yet</h3>
+                    <p>Security events will appear here as you use vaultx</p>
+                </div>
+            `;
+            return;
+        }
+
+        renderAuditLog(events, auditLogElement);
+    } catch (error) {
+        auditLogElement.innerHTML = `
+            <div class="empty-state">
+                <h3>⚠️ Failed to Load Audit Log</h3>
+                <p>${escapeHtml(error.message)}</p>
+                <p style="margin-top: 1rem;">
+                    <button class="btn btn-primary" onclick="loadAuditLog()">Retry</button>
+                </p>
+            </div>
+        `;
+    }
+}
+
+function renderAuditLog(events, container) {
+    const eventRows = events.map(event => {
+        const statusClass = event.success ? 'success' : 'error';
+        const statusIcon = event.success ? '✅' : '❌';
+        const timestamp = formatDate(event.timestamp);
+        const path = event.path ? escapeHtml(event.path) : '—';
+        const error = event.error ? `<br><small style="color: var(--danger-color);">${escapeHtml(event.error)}</small>` : '';
+        
+        return `
+            <tr class="audit-row audit-${statusClass}">
+                <td><span class="audit-status">${statusIcon}</span></td>
+                <td>${timestamp}</td>
+                <td><code>${escapeHtml(event.action)}</code></td>
+                <td><code>${path}</code></td>
+                <td><code style="font-size: 0.75rem;">${escapeHtml(event.remote_addr)}</code></td>
+                <td>${error}</td>
+            </tr>
+        `;
+    }).join('');
+
+    container.innerHTML = `
+        <div style="overflow-x: auto;">
+            <table class="audit-table">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;"></th>
+                        <th style="width: 180px;">Timestamp</th>
+                        <th style="width: 150px;">Action</th>
+                        <th>Path</th>
+                        <th style="width: 150px;">Remote Addr</th>
+                        <th style="width: 80px;">Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${eventRows}
+                </tbody>
+            </table>
+        </div>
+        <div style="margin-top: 1rem; text-align: center;">
+            <button class="btn btn-secondary" onclick="loadAuditLog()">🔄 Refresh</button>
+        </div>
+    `;
 }
 
 // Modal Management
