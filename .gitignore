@@ -20,3 +20,5 @@ dist/
 ~/.vaultx/
 daemon.token
 vault.enc
+
+graphify-out/

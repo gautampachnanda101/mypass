@@ -239,15 +239,38 @@ Secret URI format: `vault:<provider-id>/<path>`
 
 ---
 
-## Local HTTP daemon
+## Local HTTP daemon & Web UI
 
 ```bash
 vaultx serve             # default port 7474
 vaultx serve --port 8080
 ```
 
+### Web UI
+
+Open `http://127.0.0.1:7474/` in your browser to access the embedded web UI.
+
+**Touch ID Authentication:**
+1. On first access, the web UI prompts for Touch ID authentication
+2. Authenticate with your fingerprint (macOS Touch ID sensor)
+3. Session token is stored in browser memory (`sessionStorage`)
+4. Browse, search, and view secrets across all providers
+5. Resolve `vaultx.env` files in the browser
+6. View audit logs (auth failures, rate limits, security events)
+
+**Security features:**
+- Touch ID biometric authentication required
+- Rate limiting: 10 requests/second, burst 50
+- Request timeouts: 10 seconds maximum
+- Path traversal protection (blocks `..`, `/`, `\`, null bytes)
+- Sanitized error messages (never leak secret values)
+
+### API Access
+
+The daemon also exposes HTTP endpoints for programmatic access:
+
 The daemon writes a bearer token to `~/.vaultx/daemon.token` (mode 0600) at
-startup. All endpoints except `/health` require it.
+startup. All endpoints except `/health` and `/auth/touchid` require it.
 
 ```bash
 TOKEN=$(cat ~/.vaultx/daemon.token)
@@ -270,6 +293,8 @@ curl -H "X-Vaultx-Token: $TOKEN" \
 | Endpoint | Auth | Description |
 | --- | --- | --- |
 | `GET /health` | none | Liveness check |
+| `POST /auth/touchid` | none | Touch ID authentication (browser) |
+| `GET /` | none* | Web UI (* Touch ID required on access) |
 | `GET /v1/secret?path=<p>` | token | Resolve one secret |
 | `POST /v1/resolve` | token | Resolve vaultx.env body |
 | `GET /v1/list?prefix=<p>` | token | List paths (values masked) |

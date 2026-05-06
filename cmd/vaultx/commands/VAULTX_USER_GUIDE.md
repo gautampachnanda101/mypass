@@ -222,15 +222,39 @@ vaultx providers
 
 ---
 
-## Local HTTP daemon
+## Local HTTP daemon & Web UI
 
-`vaultx serve` exposes a local-only API on 127.0.0.1 for the VS Code extension
-and k3d webhook:
+`vaultx serve` starts a local HTTP server with an embedded web UI:
 
 ```bash
 vaultx serve             # default port 7474
 vaultx serve --port 8080
 ```
+
+### Web UI
+
+Open `http://127.0.0.1:7474/` in your browser.
+
+**First-time access:**
+1. Web UI loads and shows Touch ID authentication modal
+2. Click "Authenticate" and use your fingerprint on the Touch ID sensor (macOS)
+3. Session token is stored in your browser
+4. Web UI loads with access to all secrets
+
+**Features:**
+- **Secrets tab**: Browse, search, and view all secrets across providers
+- **Resolve tab**: Paste `vaultx.env` content and resolve all references
+- **Audit log tab**: View security events (auth failures, rate limits)
+
+**Security:**
+- Touch ID authentication required (biometric verification)
+- Rate limited (10 req/s, burst 50)
+- Session token stored in browser memory only
+- All secret values sanitized in error messages
+
+### API Access
+
+For CLI/programmatic access:
 
 ```bash
 TOKEN=$(cat ~/.vaultx/daemon.token)
@@ -240,10 +264,12 @@ curl -H "X-Vaultx-Token: $TOKEN" http://localhost:7474/v1/secret?path=myapp/db
 | Endpoint | Description |
 | --- | --- |
 | `GET /health` | Liveness check (no auth) |
+| `POST /auth/touchid` | Touch ID authentication (browser) |
 | `GET /v1/secret?path=<path>` | Resolve a single secret |
 | `POST /v1/resolve` | Resolve a vaultx.env body |
 | `GET /v1/list?prefix=<prefix>` | List secrets (values masked) |
 | `GET /externalsecrets/<key>` | ESO webhook endpoint |
+| `GET /` | Web UI (Touch ID required) |
 
 ---
 

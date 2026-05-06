@@ -21,25 +21,85 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gautampachnanda101/vaultx/internal/envfile"
+	"github.com/gautampachnanda101/vaultx/internal/passkey"
 	"github.com/gautampachnanda101/vaultx/internal/resolver"
+	"golang.org/x/time/rate"
 )
 
-const tokenFile = "daemon.token"
+const (
+	tokenFile = "daemon.token"
+
+	// Error message constants
+	errMethodGET          = "GET only"
+	errMethodPOST         = "POST only"
+	errInvalidToken       = "invalid or missing token"
+	errPathRequired       = "path query parameter required"
+	errKeyRequired        = "key required in path"
+	errSecretNotFound     = "secret not found"
+	errSecretResolution   = "secret resolution failed"
+	errParseEnvFile       = "invalid env file format"
+	errBodyTooLarge       = "request body too large"
+	errReadBody           = "failed to read request body"
+	errListFailed         = "failed to list secrets"
+	errRateLimitExceeded  = "rate limit exceeded"
+	errInvalidPath        = "invalid secret path"
+
+	// Rate limiting
+	requestsPerSecond = 10
+	burstSize         = 50
+
+	// Request limits
+	maxBodySize        = 1 << 20 // 1 MiB
+	requestTimeout     = 10 * time.Second
+)
 
 // Server is the vaultx daemon HTTP server.
 type Server struct {
-	registry *resolver.Registry
-	token    string
-	port     int
-	srv      *http.Server
+	registry  *resolver.Registry
+	token     string
+	port      int
+	srv       *http.Server
+	limiter   *rate.Limiter
+	auditLog  *AuditLogger
+}
+
+// AuditLogger records security-relevant events.
+type AuditLogger struct {
+	mu     sync.Mutex
+	events []AuditEvent
+}
+
+// AuditEvent represents a security-relevant action.
+type AuditEvent struct {
+	Timestamp  time.Time `json:"timestamp"`
+	Action     string    `json:"action"`
+	Path       string    `json:"path,omitempty"`
+	RemoteAddr string    `json:"remote_addr"`
+	Success    bool      `json:"success"`
+	Error      string    `json:"error,omitempty"`
+}
+
+// Log records an audit event.
+func (a *AuditLogger) Log(event AuditEvent) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	event.Timestamp = time.Now()
+	a.events = append(a.events, event)
+	// Also log to stderr for immediate visibility
+	if !event.Success {
+		log.Printf("[AUDIT] action=%s path=%s remote=%s error=%s\n",
+			event.Action, event.Path, event.RemoteAddr, event.Error)
+	}
 }
 
 // New creates a daemon server on the given port.
@@ -54,7 +114,13 @@ func New(registry *resolver.Registry, port int) (*Server, error) {
 		return nil, fmt.Errorf("write daemon token: %w", err)
 	}
 
-	s := &Server{registry: registry, token: token, port: port}
+	s := &Server{
+		registry: registry,
+		token:    token,
+		port:     port,
+		limiter:  rate.NewLimiter(requestsPerSecond, burstSize),
+		auditLog: &AuditLogger{events: make([]AuditEvent, 0, 1000)},
+	}
 	s.srv = &http.Server{
 		Addr:         fmt.Sprintf("127.0.0.1:%d", port),
 		Handler:      s.routes(),
@@ -96,11 +162,16 @@ func (s *Server) Token() string { return s.token }
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/v1/secret", s.auth(s.handleGetSecret))
-	mux.HandleFunc("/v1/resolve", s.auth(s.handleResolve))
-	mux.HandleFunc("/v1/list", s.auth(s.handleList))
+	// Touch ID authentication — no auth required, triggers biometric
+	mux.HandleFunc("/auth/touchid", s.rateLimit(s.handleTouchIDAuth))
+	mux.HandleFunc("/v1/secret", s.auth(s.rateLimit(s.handleGetSecret)))
+	mux.HandleFunc("/v1/resolve", s.auth(s.rateLimit(s.handleResolve)))
+	mux.HandleFunc("/v1/list", s.auth(s.rateLimit(s.handleList)))
 	// External Secrets Operator webhook — path variable extracted manually.
-	mux.HandleFunc("/externalsecrets/", s.auth(s.handleExternalSecrets))
+	mux.HandleFunc("/externalsecrets/", s.auth(s.rateLimit(s.handleExternalSecrets)))
+	// Web UI — no auth required initially, JS will authenticate via Touch ID
+	mux.HandleFunc("/", s.handleWebUI)
+	mux.HandleFunc("/ui/", s.handleWebUI)
 	return mux
 }
 
@@ -108,11 +179,38 @@ func (s *Server) routes() http.Handler {
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tok := r.Header.Get("X-Vaultx-Token")
+		usingQueryParam := false
 		if tok == "" {
 			tok = r.URL.Query().Get("token") // allow ?token= for ESO webhooks
+			usingQueryParam = tok != ""
+			if usingQueryParam {
+				log.Printf("[SECURITY WARNING] Token provided via query parameter from %s - prefer X-Vaultx-Token header\n", r.RemoteAddr)
+			}
 		}
 		if tok != s.token {
-			writeError(w, http.StatusUnauthorized, "invalid or missing token")
+			s.auditLog.Log(AuditEvent{
+				Action:     "auth_failed",
+				RemoteAddr: r.RemoteAddr,
+				Success:    false,
+				Error:      "invalid token",
+			})
+			writeError(w, http.StatusUnauthorized, errInvalidToken)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// rateLimit wraps a handler with rate limiting.
+func (s *Server) rateLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.limiter.Allow() {
+			s.auditLog.Log(AuditEvent{
+				Action:     "rate_limit_exceeded",
+				RemoteAddr: r.RemoteAddr,
+				Success:    false,
+			})
+			writeError(w, http.StatusTooManyRequests, errRateLimitExceeded)
 			return
 		}
 		next(w, r)
@@ -122,30 +220,94 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 // handleHealth returns 200 + seal status. No auth required — safe to expose.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		writeError(w, http.StatusMethodNotAllowed, errMethodGET)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleTouchIDAuth triggers Touch ID authentication and returns the daemon token.
+// POST /auth/touchid
+func (s *Server) handleTouchIDAuth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, errMethodPOST)
+		return
+	}
+
+	// Trigger Touch ID authentication via passkey.Load
+	if _, ok := passkey.Load(); !ok {
+		s.auditLog.Log(AuditEvent{
+			Action:     "touchid_auth",
+			RemoteAddr: r.RemoteAddr,
+			Success:    false,
+			Error:      "biometric authentication failed",
+		})
+		writeError(w, http.StatusUnauthorized, "Touch ID authentication failed or cancelled")
+		return
+	}
+
+	// Successful authentication — return the daemon token
+	s.auditLog.Log(AuditEvent{
+		Action:     "touchid_auth",
+		RemoteAddr: r.RemoteAddr,
+		Success:    true,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"token": s.token,
+		"port":  fmt.Sprintf("%d", s.port),
+	})
 }
 
 // handleGetSecret resolves a single vault path.
 // GET /v1/secret?path=local/myapp/db
 func (s *Server) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		writeError(w, http.StatusMethodNotAllowed, errMethodGET)
 		return
 	}
 	path := r.URL.Query().Get("path")
 	if path == "" {
-		writeError(w, http.StatusBadRequest, "path query parameter required")
+		writeError(w, http.StatusBadRequest, errPathRequired)
 		return
 	}
 
-	val, err := s.registry.Get(r.Context(), path)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+	// Validate path for security
+	if err := validateSecretPath(path); err != nil {
+		s.auditLog.Log(AuditEvent{
+			Action:     "get_secret",
+			Path:       path,
+			RemoteAddr: r.RemoteAddr,
+			Success:    false,
+			Error:      "invalid path",
+		})
+		writeError(w, http.StatusBadRequest, errInvalidPath)
 		return
 	}
+
+	// Add request timeout
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+
+	val, err := s.registry.Get(ctx, path)
+	if err != nil {
+		s.auditLog.Log(AuditEvent{
+			Action:     "get_secret",
+			Path:       path,
+			RemoteAddr: r.RemoteAddr,
+			Success:    false,
+			Error:      "not found",
+		})
+		writeError(w, http.StatusNotFound, errSecretNotFound)
+		return
+	}
+
+	s.auditLog.Log(AuditEvent{
+		Action:     "get_secret",
+		Path:       path,
+		RemoteAddr: r.RemoteAddr,
+		Success:    true,
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"value": val})
 }
 
@@ -153,27 +315,55 @@ func (s *Server) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 // POST /v1/resolve  body: vaultx.env contents
 func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		writeError(w, http.StatusMethodNotAllowed, errMethodPOST)
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1 MiB limit
+	// Check Content-Length before reading body
+	if r.ContentLength > maxBodySize {
+		writeError(w, http.StatusRequestEntityTooLarge, errBodyTooLarge)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "read body: "+err.Error())
+		writeError(w, http.StatusBadRequest, errReadBody)
 		return
 	}
 
 	f, err := envfile.Parse(strings.NewReader(string(body)))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "parse env file: "+err.Error())
+		s.auditLog.Log(AuditEvent{
+			Action:     "resolve",
+			RemoteAddr: r.RemoteAddr,
+			Success:    false,
+			Error:      "invalid env file",
+		})
+		writeError(w, http.StatusBadRequest, errParseEnvFile)
 		return
 	}
 
-	resolved, err := s.registry.Resolve(r.Context(), f)
+	// Add request timeout
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+
+	resolved, err := s.registry.Resolve(ctx, f)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.auditLog.Log(AuditEvent{
+			Action:     "resolve",
+			RemoteAddr: r.RemoteAddr,
+			Success:    false,
+			Error:      "resolution failed",
+		})
+		writeError(w, http.StatusInternalServerError, errSecretResolution)
 		return
 	}
+
+	s.auditLog.Log(AuditEvent{
+		Action:     "resolve",
+		RemoteAddr: r.RemoteAddr,
+		Success:    true,
+	})
 	writeJSON(w, http.StatusOK, resolved)
 }
 
@@ -181,18 +371,44 @@ func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 // GET /v1/list?prefix=myapp/
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		writeError(w, http.StatusMethodNotAllowed, errMethodGET)
 		return
 	}
 	prefix := r.URL.Query().Get("prefix")
 
+	// Validate prefix if provided
+	if prefix != "" {
+		if err := validateSecretPath(prefix); err != nil {
+			writeError(w, http.StatusBadRequest, errInvalidPath)
+			return
+		}
+	}
+
+	// Add request timeout
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+
 	// List from all registered providers — first provider wins on duplicates.
 	// For now surface only what the registry exposes via the local provider.
-	secrets, err := s.registry.List(r.Context(), prefix)
+	secrets, err := s.registry.List(ctx, prefix)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.auditLog.Log(AuditEvent{
+			Action:     "list",
+			Path:       prefix,
+			RemoteAddr: r.RemoteAddr,
+			Success:    false,
+			Error:      "list failed",
+		})
+		writeError(w, http.StatusInternalServerError, errListFailed)
 		return
 	}
+
+	s.auditLog.Log(AuditEvent{
+		Action:     "list",
+		Path:       prefix,
+		RemoteAddr: r.RemoteAddr,
+		Success:    true,
+	})
 	writeJSON(w, http.StatusOK, secrets)
 }
 
@@ -201,21 +417,45 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 // Returns: {"value": "<secret value>"}
 func (s *Server) handleExternalSecrets(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		writeError(w, http.StatusMethodNotAllowed, errMethodGET)
 		return
 	}
 
 	key := strings.TrimPrefix(r.URL.Path, "/externalsecrets/")
 	if key == "" {
-		writeError(w, http.StatusBadRequest, "key required in path")
+		writeError(w, http.StatusBadRequest, errKeyRequired)
 		return
 	}
 
-	val, err := s.registry.Get(r.Context(), key)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+	// Validate key for security
+	if err := validateSecretPath(key); err != nil {
+		writeError(w, http.StatusBadRequest, errInvalidPath)
 		return
 	}
+
+	// Add request timeout
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+
+	val, err := s.registry.Get(ctx, key)
+	if err != nil {
+		s.auditLog.Log(AuditEvent{
+			Action:     "eso_webhook",
+			Path:       key,
+			RemoteAddr: r.RemoteAddr,
+			Success:    false,
+			Error:      "not found",
+		})
+		writeError(w, http.StatusNotFound, errSecretNotFound)
+		return
+	}
+
+	s.auditLog.Log(AuditEvent{
+		Action:     "eso_webhook",
+		Path:       key,
+		RemoteAddr: r.RemoteAddr,
+		Success:    true,
+	})
 	// ESO webhook expects {"value": "..."} with optional metadata.
 	writeJSON(w, http.StatusOK, map[string]string{"value": val})
 }
@@ -247,12 +487,32 @@ func tokenPath() string {
 
 func writeToken(token string) error {
 	path := tokenPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	dir := filepath.Dir(path)
+
+	// Create directory with restrictive permissions
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(token), 0600)
+
+	// Write to temp file first, then atomic rename to prevent race conditions
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(token), 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func removeToken() error {
 	return os.Remove(tokenPath())
+}
+
+// validateSecretPath ensures paths don't contain traversal sequences or invalid chars.
+func validateSecretPath(path string) error {
+	if strings.Contains(path, "..") ||
+		strings.HasPrefix(path, "/") ||
+		strings.Contains(path, "\\") ||
+		strings.Contains(path, "\x00") {
+		return fmt.Errorf("path contains invalid characters")
+	}
+	return nil
 }

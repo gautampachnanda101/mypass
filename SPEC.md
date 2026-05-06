@@ -202,6 +202,62 @@ No secrets in manifests. No env files in containers. Vault access controls who c
 
 ---
 
+## HTTP Daemon & Web UI
+
+`vaultx serve` starts a local HTTP server on `127.0.0.1` (default port `7474`).
+
+### Endpoints
+
+| Endpoint | Method | Auth | Purpose |
+|---|---|---|---|
+| `GET /health` | GET | None | Liveness check |
+| `POST /auth/touchid` | POST | None | macOS Touch ID authentication |
+| `GET /v1/secret?path=<path>` | GET | Token | Resolve single secret |
+| `POST /v1/resolve` | POST | Token | Resolve vaultx.env body |
+| `GET /v1/list?prefix=<prefix>` | GET | Token | List secrets (values masked) |
+| `GET /externalsecrets/<key>` | GET | Token | ESO webhook endpoint |
+| `GET /` | GET | None | Web UI (Touch ID auth required) |
+
+### Web UI
+
+The daemon includes an embedded web UI accessible at `http://127.0.0.1:7474/`.
+
+**Authentication Flow:**
+1. Browser loads the web UI (no auth required for initial page load)
+2. Touch ID authentication modal appears automatically
+3. User authenticates via macOS Touch ID sensor
+4. Browser receives session token, stored in `sessionStorage`
+5. All subsequent API calls use the token via `X-Vaultx-Token` header
+
+**Features:**
+- **Secrets Tab**: Browse, search, and view all secrets across providers
+- **Resolve Tab**: Paste `vaultx.env` content and resolve all references in-browser
+- **Audit Log Tab**: View security events (auth failures, rate limits, path validation)
+
+**Security:**
+- Touch ID required for browser access (macOS only; CLI uses master password)
+- Session token stored in browser memory only (`sessionStorage`)
+- Rate limiting: 10 requests/second, burst 50
+- Request timeouts: 10 seconds maximum
+- Path validation: blocks traversal attacks (`.., /, \, null bytes`)
+- Sanitized errors: never leak secret values in HTTP responses
+- Audit logging: all security-relevant events logged to stderr
+
+### CLI Access
+
+```bash
+# Read token from daemon
+TOKEN=$(cat ~/.vaultx/daemon.token)
+
+# Call API directly
+curl -H "X-Vaultx-Token: $TOKEN" \
+  http://localhost:7474/v1/secret?path=myapp/db
+```
+
+Session token written to `~/.vaultx/daemon.token` (mode `0600`) at startup.
+
+---
+
 ## Docker Injection
 
 ```bash
@@ -240,5 +296,4 @@ vaultx run -- docker-compose up         # compose inherits the injected env
 
 - Secret sharing / team sync (use 1Password or Vault for that)
 - Secret versioning / history (provider-dependent)
-- Web UI hosted externally (local daemon only)
 - Windows support (v2)

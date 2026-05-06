@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>vaultx - Secrets Manager</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <h1>🔐 vaultx</h1>
+                <p class="subtitle">Zero-Trust Secrets Manager</p>
+            </div>
+            <div class="status-badge">
+                <span class="status-dot"></span>
+                <span id="status-text">Connected</span>
+            </div>
+        </header>
+
+        <div class="tabs">
+            <button class="tab active" data-tab="secrets">Secrets</button>
+            <button class="tab" data-tab="resolve">Resolve</button>
+            <button class="tab" data-tab="audit">Audit Log</button>
+        </div>
+
+        <!-- Secrets Tab -->
+        <div id="secrets-tab" class="tab-content active">
+            <div class="toolbar">
+                <input type="text" id="search-input" placeholder="Search secrets..." class="search-input">
+                <button id="refresh-btn" class="btn btn-secondary">🔄 Refresh</button>
+                <button id="add-secret-btn" class="btn btn-primary">+ Add Secret</button>
+            </div>
+
+            <div id="secrets-list" class="secrets-list">
+                <div class="loading">Loading secrets...</div>
+            </div>
+        </div>
+
+        <!-- Resolve Tab -->
+        <div id="resolve-tab" class="tab-content">
+            <div class="resolve-section">
+                <h3>Resolve vaultx.env File</h3>
+                <p class="help-text">Paste your vaultx.env content below to resolve all vault: references</p>
+                
+                <textarea id="env-input" class="env-textarea" placeholder="DB_PASSWORD=vault:local/myapp/db_password
+API_KEY=vault:local/myapp/api_key
+APP_ENV=development"></textarea>
+                
+                <button id="resolve-btn" class="btn btn-primary">Resolve Secrets</button>
+                
+                <div id="resolve-output" class="resolve-output" style="display: none;">
+                    <h4>Resolved Environment Variables</h4>
+                    <pre id="resolved-content"></pre>
+                    <button id="copy-resolved-btn" class="btn btn-secondary">📋 Copy to Clipboard</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Audit Log Tab -->
+        <div id="audit-tab" class="tab-content">
+            <div class="audit-section">
+                <h3>Security Audit Log</h3>
+                <p class="help-text">Recent security-relevant events and access attempts</p>
+                
+                <div id="audit-log" class="audit-log">
+                    <div class="loading">Audit logging available in API only</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add/Edit Secret Modal -->
+        <div id="secret-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="modal-title">Add Secret</h3>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="secret-path">Secret Path</label>
+                        <input type="text" id="secret-path" placeholder="myapp/db_password" class="form-input">
+                        <small class="form-help">Use forward slashes to organize secrets hierarchically</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="secret-value">Secret Value</label>
+                        <input type="password" id="secret-value" placeholder="Enter secret value" class="form-input">
+                        <button type="button" id="toggle-visibility" class="btn-link">Show</button>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="cancel-btn" class="btn btn-secondary">Cancel</button>
+                    <button id="save-btn" class="btn btn-primary">Save Secret</button>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p class="footer-text">
+                Server: <code>127.0.0.1:{{.Port}}</code> | 
+                <a href="#" onclick="showInfo(); return false;">❓ Help</a> |
+                <a href="https://github.com/gautampachnanda101/vaultx" target="_blank" rel="noopener">📖 Documentation</a>
+            </p>
+        </footer>
+    </div>
+
+    <script>
+        // Configuration - Token will be obtained via Touch ID
+        const API_BASE = '';
+    </script>
+    <script src="/static/app.js"></script>
+</body>
+</html>

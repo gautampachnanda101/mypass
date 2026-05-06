@@ -99,7 +99,7 @@ func runAllChecks(fix bool, ux terminalUX) []check {
 
 	// Data directory
 	if _, err := os.Stat(vaultxDir); err != nil {
-		detail := fmt.Sprintf("~/.vaultx/ does not exist")
+		detail := "~/.vaultx/ does not exist"
 		fixCmd := "vaultx init"
 		if fix {
 			if mkErr := os.MkdirAll(vaultxDir, 0o700); mkErr == nil {

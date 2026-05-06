@@ -12,6 +12,7 @@ import (
 
 	"github.com/gautampachnanda101/vaultx/internal/providers"
 	"github.com/gautampachnanda101/vaultx/internal/resolver"
+	"golang.org/x/time/rate"
 )
 
 // stubProvider for daemon tests.
@@ -51,6 +52,8 @@ func newTestServer(t *testing.T) (*Server, *httptest.Server) {
 		registry: reg,
 		token:    "test-token-abc",
 		port:     0,
+		limiter:  rate.NewLimiter(requestsPerSecond, burstSize),
+		auditLog: &AuditLogger{events: make([]AuditEvent, 0, 1000)},
 	}
 	srv.srv = &http.Server{Handler: srv.routes()}
 	ts := httptest.NewServer(srv.routes())
