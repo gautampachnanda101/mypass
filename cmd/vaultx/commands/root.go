@@ -303,6 +303,7 @@ func contextualHelpGuide(cmd *cobra.Command) string {
 - Health check: vaultx doctor
 - Store a secret: vaultx set myapp/db_password "s3cr3t"
 - Run your app (from project dir): cd ~/my-app && vaultx run -- npm start
+- Web UI: vaultx serve → open http://127.0.0.1:7474/
 - Inject into current shell: eval $(vaultx shell)
 - Install tab completion: vaultx completion`)
 	case strings.HasSuffix(path, "init"):
@@ -391,6 +392,7 @@ Quick start:
   vaultx init --biometric       Create vault + enable Touch ID
   vaultx set myapp/db_pass s3cr3t    Store a secret
   vaultx run -- npm start            Resolve vaultx.env and run your app
+  vaultx serve                       Start web UI at http://127.0.0.1:7474/
 	vaultx docs                        Read the shipped public user guide
   eval $(vaultx shell)               Inject secrets into current shell
 
@@ -402,8 +404,13 @@ Configuration:
 Troubleshooting:
   vaultx docs         Read the shipped public guide in terminal
   vaultx providers    Check all configured providers and health
-  vaultx version      Show version`),
-		Example: "  vaultx init --biometric\n  vaultx set myapp/db_password \"s3cr3t\"\n  vaultx run -- npm start\n  vaultx docs\n  eval $(vaultx shell)\n  vaultx providers",
+  vaultx version      Show version
+
+Web UI:
+  vaultx serve        Start daemon with embedded web UI
+                      Open http://127.0.0.1:7474/ in your browser
+                      Touch ID authentication required (macOS)`),
+		Example: "  vaultx init --biometric\n  vaultx set myapp/db_password \"s3cr3t\"\n  vaultx run -- npm start\n  vaultx serve\n  vaultx docs\n  eval $(vaultx shell)\n  vaultx providers",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
