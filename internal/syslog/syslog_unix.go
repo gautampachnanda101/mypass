@@ -1,6 +1,6 @@
-//go:build !windows
-// +build !windows
+//go:build !windows && !plan9
 
+// Package syslog provides audit log forwarding to syslog servers.
 package syslog
 
 import (
@@ -22,10 +22,8 @@ func New(network, address string) (*Writer, error) {
 	var err error
 
 	if network == "" {
-		// Local syslog
 		w, err = syslog.New(syslog.LOG_AUTH|syslog.LOG_INFO, "vaultx")
 	} else {
-		// Remote syslog
 		w, err = syslog.Dial(network, address, syslog.LOG_AUTH|syslog.LOG_INFO, "vaultx")
 	}
 

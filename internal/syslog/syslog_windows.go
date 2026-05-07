@@ -1,24 +1,25 @@
-//go:build windows
-// +build windows
+//go:build windows || plan9
 
+// Package syslog provides audit log forwarding to syslog servers.
 package syslog
 
-import "fmt"
+import (
+	"errors"
+	"sync"
+)
 
-// Writer is a no-op syslog writer for Windows (syslog not supported).
-type Writer struct{}
-
-// New returns a no-op writer on Windows since syslog is Unix-only.
-func New(network, address string) (*Writer, error) {
-	return nil, fmt.Errorf("syslog not supported on Windows")
+// Writer is a stub on platforms where log/syslog is unavailable.
+type Writer struct {
+	mu sync.Mutex
 }
 
-// Write is a no-op on Windows.
-func (s *Writer) Write(msg string) error {
-	return fmt.Errorf("syslog not supported on Windows")
+var errNotSupported = errors.New("syslog not supported on this platform")
+
+// New always returns an error on Windows and plan9.
+func New(_, _ string) (*Writer, error) {
+	return nil, errNotSupported
 }
 
-// WriteErr is a no-op on Windows.
-func (s *Writer) WriteErr(msg string) error {
-	return fmt.Errorf("syslog not supported on Windows")
-}
+func (s *Writer) Write(_ string) error    { return errNotSupported }
+func (s *Writer) WriteErr(_ string) error { return errNotSupported }
+func (s *Writer) Close() error            { return nil }
