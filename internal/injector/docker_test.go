@@ -2,6 +2,7 @@ package injector
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
@@ -74,3 +75,63 @@ func TestResolveFileNilOnMissingFile(t *testing.T) {
 	}
 	_ = resolved
 }
+
+func TestResolveFileWithTempFile(t *testing.T) {
+	ctx := context.Background()
+	
+	// Create a temporary vaultx.env file
+	tmpFile := t.TempDir() + "/vaultx.env"
+	content := []byte("PLAIN_VAR=value123\nANOTHER=test\n")
+	if err := os.WriteFile(tmpFile, content, 0600); err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	
+	// resolveFile should parse plain values even without providers
+	resolved, err := resolveFile(ctx, nil, tmpFile)
+	if err != nil {
+		t.Fatalf("resolveFile failed: %v", err)
+	}
+	
+	if resolved["PLAIN_VAR"] != "value123" {
+		t.Errorf("expected PLAIN_VAR=value123, got %q", resolved["PLAIN_VAR"])
+	}
+	if resolved["ANOTHER"] != "test" {
+		t.Errorf("expected ANOTHER=test, got %q", resolved["ANOTHER"])
+	}
+}
+
+func TestEnvPairsEmptyMap(t *testing.T) {
+	pairs := envPairs(map[string]string{})
+	if len(pairs) != 0 {
+		t.Fatalf("expected empty slice, got %v", pairs)
+	}
+}
+
+func TestEnvPairsWithSpecialChars(t *testing.T) {
+	m := map[string]string{
+		"DB_URL": "postgres://user:p@ss@localhost:5432/db",
+		"API_KEY": "abc=def=ghi",
+	}
+	pairs := envPairs(m)
+	
+	found := make(map[string]bool)
+	for _, p := range pairs {
+		if strings.HasPrefix(p, "DB_URL=") {
+			found["DB_URL"] = true
+			if !strings.Contains(p, "postgres://") {
+				t.Errorf("DB_URL value not preserved: %q", p)
+			}
+		}
+		if strings.HasPrefix(p, "API_KEY=") {
+			found["API_KEY"] = true
+			if !strings.Contains(p, "abc=def=ghi") {
+				t.Errorf("API_KEY value not preserved: %q", p)
+			}
+		}
+	}
+	
+	if !found["DB_URL"] || !found["API_KEY"] {
+		t.Errorf("not all keys found in pairs: %v", pairs)
+	}
+}
+

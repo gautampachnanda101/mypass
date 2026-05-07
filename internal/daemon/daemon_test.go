@@ -234,3 +234,133 @@ func TestExternalSecretsNotFound(t *testing.T) {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
 	}
 }
+
+// --- AuditLogger ---
+
+func TestAuditLogger_LogAndGetEvents(t *testing.T) {
+	al := &AuditLogger{events: make([]AuditEvent, 0, 1000)}
+	
+	al.Log(AuditEvent{
+		Action:     "get_secret",
+		Path:       "myapp/db",
+		RemoteAddr: "127.0.0.1",
+		Success:    true,
+	})
+	al.Log(AuditEvent{
+		Action:     "get_secret",
+		Path:       "myapp/api",
+		RemoteAddr: "127.0.0.1",
+		Success:    true,
+	})
+	al.Log(AuditEvent{
+		Action:     "get_secret",
+		Path:       "missing",
+		RemoteAddr: "127.0.0.1",
+		Success:    false,
+	})
+	
+	events := al.GetEvents(10)
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+	
+	// Events are returned in reverse order (most recent first)
+	// So events[0] is the last one logged (the failed one)
+	if events[0].Success {
+		t.Errorf("expected first returned event (most recent) to have success=false")
+	}
+	if events[0].Path != "missing" {
+		t.Errorf("expected first event path=missing, got %q", events[0].Path)
+	}
+	
+	// Last returned event is the first one logged
+	if !events[2].Success {
+		t.Errorf("expected last returned event (oldest) to have success=true")
+	}
+	if events[2].Path != "myapp/db" {
+		t.Errorf("expected last event path=myapp/db, got %q", events[2].Path)
+	}
+}
+
+func TestAuditLogger_GetEventsLimit(t *testing.T) {
+	al := &AuditLogger{events: make([]AuditEvent, 0, 100)}
+	
+	// Add 10 events
+	for i := 0; i < 10; i++ {
+		al.Log(AuditEvent{
+			Action:     "get_secret",
+			Path:       fmt.Sprintf("/path%d", i),
+			RemoteAddr: "127.0.0.1",
+			Success:    true,
+		})
+	}
+	
+	// Request only the 5 most recent
+	events := al.GetEvents(5)
+	if len(events) != 5 {
+		t.Fatalf("expected 5 events, got %d", len(events))
+	}
+	
+	// Most recent should be path9 (last logged)
+	if events[0].Path != "/path9" {
+		t.Errorf("expected first event (most recent) path=/path9, got %s", events[0].Path)
+	}
+	
+	// Oldest of the 5 returned should be path5
+	if events[4].Path != "/path5" {
+		t.Errorf("expected last event (5th most recent) path=/path5, got %s", events[4].Path)
+	}
+}
+
+
+
+// --- validateSecretPath ---
+
+func TestValidateSecretPath(t *testing.T) {
+	tests := []struct {
+		path  string
+		valid bool
+	}{
+		{"myapp/db", true},
+		{"prod/api/key", true},
+		{"simple", true},
+		{"", true},                  // Empty is allowed (will fail later in provider)
+		{"./local", true},           // Leading ./ is allowed
+		{"../etc/passwd", false},    // .. is not allowed
+		{"path/../other", false},    // .. anywhere is not allowed
+		{"/absolute/path", false},   // Leading / is not allowed
+		{"path\\with\\backslash", false}, // Backslashes not allowed
+	}
+	
+	for _, tt := range tests {
+		err := validateSecretPath(tt.path)
+		if tt.valid && err != nil {
+			t.Errorf("validateSecretPath(%q) should be valid but got error: %v", tt.path, err)
+		}
+		if !tt.valid && err == nil {
+			t.Errorf("validateSecretPath(%q) should be invalid but got no error", tt.path)
+		}
+	}
+}
+
+// --- Rate Limiting ---
+
+func TestRateLimitExceeded(t *testing.T) {
+	srv, ts := newTestServer(t)
+	
+	// Set very low rate limit for testing
+	srv.limiter = rate.NewLimiter(1, 1) // 1 req/sec, burst 1
+	
+	// First request should succeed
+	resp1 := get(t, ts, "test-token-abc", "/v1/secret?path=myapp/db")
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("first request: expected 200, got %d", resp1.StatusCode)
+	}
+	
+	// Immediate second request should be rate limited
+	resp2 := get(t, ts, "test-token-abc", "/v1/secret?path=myapp/api")
+	if resp2.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second request: expected 429, got %d", resp2.StatusCode)
+	}
+}
+

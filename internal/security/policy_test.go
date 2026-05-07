@@ -3,6 +3,7 @@ package security
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -196,9 +197,12 @@ func TestPolicyManager_AutoLock(t *testing.T) {
 		t.Fatalf("NewPolicyManager: %v", err)
 	}
 
+	var mu sync.Mutex
 	locked := false
 	pm.SetAutoLockCallback(func() {
+		mu.Lock()
 		locked = true
+		mu.Unlock()
 	})
 
 	// Start auto-lock with very short duration for testing
@@ -215,7 +219,11 @@ func TestPolicyManager_AutoLock(t *testing.T) {
 	// Wait for auto-lock to trigger
 	time.Sleep(200 * time.Millisecond)
 
-	if !locked {
+	mu.Lock()
+	wasLocked := locked
+	mu.Unlock()
+
+	if !wasLocked {
 		t.Error("auto-lock callback should have been called")
 	}
 }
