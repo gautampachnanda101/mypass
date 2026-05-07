@@ -4,16 +4,36 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
+	"github.com/gautampachnanda101/vaultx/internal/backup"
 	"github.com/gautampachnanda101/vaultx/internal/config"
 	"github.com/gautampachnanda101/vaultx/internal/passkey"
 	"github.com/gautampachnanda101/vaultx/internal/providers/local"
 )
+
+// autoBackup creates an encrypted backup of the vault after mutations.
+// Silently fails if backup fails (non-critical operation).
+func autoBackup() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+
+	vaultPath := filepath.Join(home, ".vaultx", "vault.enc")
+	backupDir := filepath.Join(home, ".vaultx", "backups")
+	mgr := backup.New(backupDir)
+
+	// Try to load master password from passkey store
+	if pass, ok := passkey.Load(); ok {
+		_, _ = mgr.AutoBackup(vaultPath, pass)
+	}
+}
 
 func cmdInit() *cobra.Command {
 	var biometric bool
@@ -122,6 +142,9 @@ func cmdLock() *cobra.Command {
 		Example: `  vaultx lock`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			state.vault.Lock()
+			if state.policy != nil {
+				state.policy.StopAutoLock()
+			}
 			fmt.Fprintln(os.Stderr, "Vault locked.")
 			return nil
 		},
@@ -169,6 +192,10 @@ func cmdSet() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(os.Stderr, "Set %s\n", args[0])
+			
+			// Auto-backup after mutation
+			autoBackup()
+			
 			return nil
 		},
 	}
@@ -189,6 +216,10 @@ func cmdDelete() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(os.Stderr, "Deleted %s\n", args[0])
+			
+			// Auto-backup after mutation
+			autoBackup()
+			
 			return nil
 		},
 	}

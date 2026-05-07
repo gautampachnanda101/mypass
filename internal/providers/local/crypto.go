@@ -37,6 +37,8 @@ import (
 	"runtime"
 
 	"golang.org/x/crypto/argon2"
+
+	"github.com/gautampachnanda101/vaultx/internal/memprotect"
 )
 
 const (
@@ -112,9 +114,7 @@ func (k *barrierKeys) zero() {
 
 // zeroBytes overwrites a byte slice with zeros.
 func zeroBytes(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
+	memprotect.Zero(b)
 }
 
 // deriveBarrierKey runs Argon2id with the given params and returns the barrier key.
@@ -125,6 +125,13 @@ func deriveBarrierKey(password string, p kdfParams) ([]byte, error) {
 		return nil, fmt.Errorf("decode kdf salt: %w", err)
 	}
 	key := argon2.IDKey([]byte(password), salt, p.Time, p.Memory, p.Threads, keyLen)
+	
+	// Lock barrier key in RAM to prevent swapping to disk.
+	unlock, err := memprotect.Lock(key)
+	if err == nil {
+		runtime.SetFinalizer(&key, func(k *[]byte) { unlock() })
+	}
+	
 	return key, nil
 }
 
@@ -156,6 +163,12 @@ func initHeader(password string) (*vaultHeader, []byte, error) {
 	if _, err := io.ReadFull(rand.Reader, ek); err != nil {
 		zeroBytes(ek)
 		return nil, nil, fmt.Errorf("generate encryption key: %w", err)
+	}
+	
+	// Lock EK in RAM.
+	unlockEK, err := memprotect.Lock(ek)
+	if err == nil {
+		runtime.SetFinalizer(&ek, func(k *[]byte) { unlockEK() })
 	}
 
 	wrappedKey, err := sealBytes(ek, barrier)

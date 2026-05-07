@@ -25,20 +25,19 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gautampachnanda101/vaultx/internal/envfile"
+	"github.com/gautampachnanda101/vaultx/internal/keychain"
 	"github.com/gautampachnanda101/vaultx/internal/passkey"
 	"github.com/gautampachnanda101/vaultx/internal/resolver"
+	vaultxsyslog "github.com/gautampachnanda101/vaultx/internal/syslog"
 	"golang.org/x/time/rate"
 )
 
 const (
-	tokenFile = "daemon.token"
-
 	// Error message constants
 	errMethodGET          = "GET only"
 	errMethodPOST         = "POST only"
@@ -75,8 +74,9 @@ type Server struct {
 
 // AuditLogger records security-relevant events.
 type AuditLogger struct {
-	mu     sync.Mutex
-	events []AuditEvent
+	mu           sync.Mutex
+	events       []AuditEvent
+	syslogWriter *vaultxsyslog.Writer
 }
 
 // AuditEvent represents a security-relevant action.
@@ -95,10 +95,22 @@ func (a *AuditLogger) Log(event AuditEvent) {
 	defer a.mu.Unlock()
 	event.Timestamp = time.Now()
 	a.events = append(a.events, event)
-	// Also log to stderr for immediate visibility
+	
+	// Log to stderr for immediate visibility
 	if !event.Success {
 		log.Printf("[AUDIT] action=%s path=%s remote=%s error=%s\n",
 			event.Action, event.Path, event.RemoteAddr, event.Error)
+	}
+	
+	// Forward to syslog if configured
+	if a.syslogWriter != nil {
+		msg := fmt.Sprintf("action=%s path=%s remote=%s success=%t error=%s",
+			event.Action, event.Path, event.RemoteAddr, event.Success, event.Error)
+		if event.Success {
+			_ = a.syslogWriter.Write(msg)
+		} else {
+			_ = a.syslogWriter.WriteErr(msg)
+		}
 	}
 }
 
@@ -120,16 +132,31 @@ func (a *AuditLogger) GetEvents(limit int) []AuditEvent {
 	return events
 }
 
+// EnableSyslog configures syslog forwarding for audit events.
+// network: "", "tcp", or "udp". Empty string uses local syslog.
+// address: "host:port" for remote syslog, ignored if network is empty.
+func (a *AuditLogger) EnableSyslog(network, address string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	
+	w, err := vaultxsyslog.New(network, address)
+	if err != nil {
+		return err
+	}
+	a.syslogWriter = w
+	return nil
+}
+
 // New creates a daemon server on the given port.
-// The session token is generated randomly and written to ~/.vaultx/daemon.token.
+// The session token is generated randomly and stored in the OS keychain.
 func New(registry *resolver.Registry, port int) (*Server, error) {
 	token, err := generateToken()
 	if err != nil {
 		return nil, fmt.Errorf("generate daemon token: %w", err)
 	}
 
-	if err := writeToken(token); err != nil {
-		return nil, fmt.Errorf("write daemon token: %w", err)
+	if err := keychain.StoreDaemonToken(token); err != nil {
+		return nil, fmt.Errorf("store daemon token in keychain: %w", err)
 	}
 
 	s := &Server{
@@ -166,7 +193,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.srv.Shutdown(shutCtx)
-		_ = removeToken()
+		_ = keychain.DeleteDaemonToken()
 		return nil
 	case err := <-errCh:
 		return err
@@ -175,6 +202,16 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 
 // Token returns the session token (for testing).
 func (s *Server) Token() string { return s.token }
+
+// EnableSyslog configures audit log forwarding to syslog.
+// network: "" or "local" for local syslog, "tcp" or "udp" for remote.
+// address: "host:port" for remote syslog, ignored for local.
+func (s *Server) EnableSyslog(network, address string) error {
+	if network == "local" {
+		network = ""
+	}
+	return s.auditLog.EnableSyslog(network, address)
+}
 
 // routes wires all HTTP handlers.
 func (s *Server) routes() http.Handler {
@@ -516,32 +553,6 @@ func generateToken() (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
-}
-
-func tokenPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".vaultx", tokenFile)
-}
-
-func writeToken(token string) error {
-	path := tokenPath()
-	dir := filepath.Dir(path)
-
-	// Create directory with restrictive permissions
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-
-	// Write to temp file first, then atomic rename to prevent race conditions
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(token), 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
-}
-
-func removeToken() error {
-	return os.Remove(tokenPath())
 }
 
 // validateSecretPath ensures paths don't contain traversal sequences or invalid chars.

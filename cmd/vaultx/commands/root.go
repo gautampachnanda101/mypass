@@ -4,16 +4,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
 	"github.com/gautampachnanda101/vaultx/internal/config"
+	"github.com/gautampachnanda101/vaultx/internal/mfa"
 	"github.com/gautampachnanda101/vaultx/internal/passkey"
 	"github.com/gautampachnanda101/vaultx/internal/providers/local"
 	"github.com/gautampachnanda101/vaultx/internal/providers/onepassword"
 	"github.com/gautampachnanda101/vaultx/internal/resolver"
+	"github.com/gautampachnanda101/vaultx/internal/security"
 )
 
 // buildInfo is injected from main via SetBuildInfo.
@@ -43,6 +46,7 @@ type appState struct {
 	cfg      *config.Config
 	vault    *local.Provider
 	registry *resolver.Registry
+	policy   *security.PolicyManager
 }
 
 var state appState
@@ -475,11 +479,20 @@ Web UI:
 	doctor := cmdDoctor()
 	doctor.GroupID = "vault"
 
+	audit := cmdAudit()
+	audit.GroupID = "vault"
+
+	mfaCmd := cmdMFA()
+	mfaCmd.GroupID = "vault"
+
+	backupCmd := cmdBackup()
+	backupCmd.GroupID = "vault"
+
 	root.AddCommand(
 		initCmd, unlock, lock, doctor,
 		get, set, del, list,
 		run, shell,
-		serve, docker, k3d,
+		serve, docker, k3d, audit, mfaCmd, backupCmd,
 		imp, exp, prov, docs,
 		cmdVersion(),
 		cmdCompletion(),
@@ -553,6 +566,21 @@ func loadState() error {
 	}
 	state.vault = local.New("local", vaultPath)
 
+	// Initialize security policy manager
+	policyPath := filepath.Join(filepath.Dir(vaultPath), "policy.json")
+	policy, err := security.NewPolicyManager(policyPath)
+	if err != nil {
+		return fmt.Errorf("init policy manager: %w", err)
+	}
+	// Set auto-lock callback to lock vault after idle time
+	policy.SetAutoLockCallback(func() {
+		if !state.vault.IsSealed() {
+			state.vault.Lock()
+			fmt.Fprintln(os.Stderr, "\\n🔒 Vault auto-locked after idle time.")
+		}
+	})
+	state.policy = policy
+
 	state.registry = resolver.NewRegistry()
 	state.registry.Register(state.vault, true)
 
@@ -569,23 +597,95 @@ func loadState() error {
 
 // requireUnlocked unlocks the vault. It first tries the passkey store (Touch ID
 // on macOS), then falls back to prompting the user for their master password.
+// Enforces rate limiting and lockout policies.
 func requireUnlocked() error {
 	if !state.vault.IsSealed() {
+		// Record activity for auto-lock timer
+		if state.policy != nil {
+			state.policy.RecordActivity()
+		}
 		return nil
 	}
+
+	// Check if unlock is allowed (rate limiting + lockout)
+	if state.policy != nil {
+		if err := state.policy.CheckUnlockAllowed(); err != nil {
+			return err
+		}
+	}
+
 	// Try the passkey store first — Touch ID on macOS, no-op elsewhere.
 	if stored, ok := passkey.Load(); ok {
-		if err := state.vault.Unlock(stored); err == nil {
+		err := state.vault.Unlock(stored)
+		success := (err == nil)
+
+		if state.policy != nil {
+			state.policy.RecordUnlockAttempt(success)
+			if success {
+				state.policy.StartAutoLock()
+			}
+		}
+
+		if success {
 			return nil
 		}
 		// Stored credential is stale — clear it and fall through to prompt.
 		passkey.Clear()
 	}
+
+	// Prompt for master password
 	pass, err := readPassword("Master password: ")
 	if err != nil {
 		return err
 	}
-	return state.vault.Unlock(pass)
+
+	unlockErr := state.vault.Unlock(pass)
+	success := (unlockErr == nil)
+
+	if state.policy != nil {
+		state.policy.RecordUnlockAttempt(success)
+		if success {
+			state.policy.StartAutoLock()
+		}
+	}
+
+	if unlockErr != nil {
+		return unlockErr
+	}
+
+	// Check if MFA is enabled and validate TOTP code
+	home, _ := os.UserHomeDir()
+	mfaPath := filepath.Join(home, ".vaultx", "mfa.json")
+	mfaMgr := mfa.New(mfaPath)
+	
+	mfaEnabled, err := mfaMgr.IsEnabled()
+	if err != nil {
+		// MFA config error shouldn't block unlock
+		return nil
+	}
+
+	if mfaEnabled {
+		// Prompt for TOTP code
+		fmt.Fprint(os.Stderr, "Authenticator code: ")
+		var code string
+		if _, err := fmt.Scanln(&code); err != nil {
+			state.vault.Lock()
+			return fmt.Errorf("read authenticator code: %w", err)
+		}
+
+		valid, err := mfaMgr.Validate(code)
+		if err != nil {
+			state.vault.Lock()
+			return fmt.Errorf("validate MFA code: %w", err)
+		}
+
+		if !valid {
+			state.vault.Lock()
+			return fmt.Errorf("invalid authenticator code")
+		}
+	}
+
+	return nil
 }
 
 // readPassword reads a password from the terminal without echo.

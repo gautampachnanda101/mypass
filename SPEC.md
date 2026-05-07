@@ -286,10 +286,201 @@ vaultx run -- docker-compose up         # compose inherits the injected env
 |---|---|
 | Secrets never on disk (unencrypted) | Vault stored as AES-256-GCM ciphertext; runtime values in process memory only |
 | Master password never stored | Argon2id → derive key; key held in memory, cleared on lock |
+| Memory protection | Sensitive keys locked in RAM via mlock() (Unix/macOS) / VirtualLock (Windows) |
 | `vaultx.env` safe to commit | Contains only references (`vault:provider/path`), never values |
 | Provider credentials not in config | Tokens sourced from env vars or OS keychain, never written to config file |
-| Audit trail (future) | Daemon logs every resolution: who, what, when |
+| Defense in depth | Rate limiting (10 req/s), lockout after 5 failures, auto-lock after 15min idle |
+| Multi-factor authentication | TOTP (RFC 6238) with QR code setup and recovery codes |
+| Audit trail | Daemon logs every access/unlock/failure; export JSON/CSV; forward to syslog |
+| Encrypted backups | Auto-backup on mutations; Shamir secret sharing for distributed recovery |
 | Rotation | Update in vault once; all `vaultx run` invocations pick it up immediately |
+
+---
+
+## Defense-in-Depth Security Policies
+
+vaultx implements layered security controls beyond encryption:
+
+### Unlock Rate Limiting
+
+- **Max 10 unlock attempts per minute** across CLI and daemon
+- **Lockout after 5 failed attempts** — vault locked for 30 minutes
+- State persisted to `~/.vaultx/policy.json` across process restarts
+- Protects against brute-force password guessing
+
+### Auto-Lock
+
+- **Vault auto-locks after 15 minutes of inactivity**
+- Activity = any vault operation (get, set, delete, list, run)
+- Timer reset on each operation
+- Manual lock via `vaultx lock` stops timer
+
+### Memory Protection
+
+- **Encryption keys locked in RAM** via `mlock()` (Unix/macOS) or `VirtualLock` (Windows)
+- Prevents secrets from being swapped to disk
+- Finalizers ensure cleanup on garbage collection
+- Daemon session tokens stored in OS keychain (macOS Keychain, future: Linux Secret Service, Windows Credential Manager)
+
+---
+
+## Multi-Factor Authentication (TOTP)
+
+Enable TOTP-based 2FA for vault unlocking:
+
+```bash
+# Enable MFA (generates TOTP secret + QR code + recovery codes)
+vaultx mfa enable
+
+# Unlock flow: password + 6-digit authenticator code
+vaultx unlock
+# Master password: **********
+# Authenticator code: 123456
+
+# Disable MFA
+vaultx mfa disable
+
+# View remaining recovery codes
+vaultx mfa recovery-codes
+```
+
+### TOTP Setup Flow
+
+1. `vaultx mfa enable` generates:
+   - TOTP secret (32-byte base32-encoded)
+   - QR code (ASCII art in terminal, or data URL in web UI)
+   - 10 recovery codes (format: `XXXX-XXXX`, single-use)
+
+2. Scan QR code with authenticator app (Google Authenticator, Authy, 1Password, etc.)
+
+3. Subsequent unlocks require:
+   - Master password
+   - 6-digit TOTP code from authenticator app
+   - Or: one recovery code (consumed on use)
+
+### Recovery Codes
+
+- **10 codes generated** during MFA setup
+- **Format**: `ABCD-EFGH` (alphanumeric, no ambiguous chars: 0, O, 1, I)
+- **Single-use**: Each code is invalidated after use
+- **View remaining codes**: `vaultx mfa recovery-codes` (requires unlock)
+- **Regenerate**: Disable and re-enable MFA to generate fresh recovery codes
+
+---
+
+## Audit Logging
+
+All security-relevant events are logged:
+
+### Events Logged
+
+- Vault unlocks (success/failure)
+- Secret access (GET /v1/secret, vaultx get, etc.)
+- Secret mutations (set, delete)
+- MFA validation (success/failure)
+- Rate limit violations
+- Lockout triggers
+
+### Audit Export
+
+```bash
+# Export to JSON
+vaultx audit --format json --output audit.json
+
+# Export to CSV
+vaultx audit --format csv --output audit.csv
+
+# View in terminal (table format)
+vaultx audit --limit 50
+```
+
+### Syslog Integration
+
+Forward audit logs to syslog servers (local or remote):
+
+```bash
+# Local syslog
+vaultx serve --syslog-network local
+
+# Remote syslog (TCP)
+vaultx serve --syslog-network tcp --syslog-address syslog.example.com:514
+
+# Remote syslog (UDP)
+vaultx serve --syslog-network udp --syslog-address 192.168.1.100:514
+```
+
+- **Facility**: `LOG_AUTH`
+- **Tag**: `vaultx`
+- **Levels**: Info (successful operations), Error (failures)
+
+---
+
+## Encrypted Backups with Shamir Secret Sharing
+
+### Auto-Backup
+
+vaultx automatically creates encrypted backups after every vault mutation:
+
+```bash
+# Backups created on:
+vaultx set myapp/key value    # After set
+vaultx delete myapp/key       # After delete
+
+# Backups stored in ~/.vaultx/backups/
+# Format: vault-2025-05-15T10-30-00.enc
+```
+
+### Manual Backup
+
+```bash
+# Create backup manually
+vaultx backup create
+
+# List all backups
+vaultx backup list
+```
+
+### Restore from Backup
+
+Restore with master password:
+
+```bash
+vaultx backup restore vault-2025-05-15T10-30-00.enc
+```
+
+### Shamir Secret Sharing
+
+Split the backup encryption key into N shares, requiring M to restore:
+
+```bash
+# Split backup key into 5 shares, requiring 3 to restore
+vaultx backup split --shares 5 --threshold 3
+
+# Outputs:
+#   ~/.vaultx/backup-shares/share-1.json
+#   ~/.vaultx/backup-shares/share-2.json
+#   ...
+#   ~/.vaultx/backup-shares/share-5.json
+
+# Distribute shares to different locations/people
+
+# Restore using shares (any 3 of the 5)
+vaultx backup restore --shares share-1.json,share-3.json,share-4.json vault-2025-05-15T10-30-00.enc
+```
+
+### Use Cases
+
+- **Disaster recovery**: Store Shamir shares with different team members
+- **Escrow**: Split backup key and deposit shares with legal/compliance
+- **Geographic distribution**: Store shares in different physical locations (fire, theft protection)
+- **M-of-N governance**: Require M approvals from N stakeholders to recover vault
+
+### Encryption
+
+- Backups encrypted with **AES-256-GCM**
+- Key derived from master password via **Argon2id** (64 MiB, 3 iterations, 4 threads)
+- Separate KDF salt for backup keys (distinct from vault encryption)
+- Shamir implementation from `github.com/hashicorp/vault/shamir` (battle-tested)
 
 ---
 

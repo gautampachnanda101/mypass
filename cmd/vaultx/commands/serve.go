@@ -18,6 +18,8 @@ const defaultMaxMemMB = 64
 func cmdServe() *cobra.Command {
 	var port int
 	var maxMemMB int
+	var syslogNetwork string
+	var syslogAddress string
 
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -42,20 +44,22 @@ func cmdServe() *cobra.Command {
 			"  - Rate limiting: 10 req/s, burst 50\n" +
 			"  - Request timeouts: 10 seconds\n" +
 			"  - Path traversal protection\n" +
-			"  - Audit logging of all security events\n\n" +
-			"A session token is written to ~/.vaultx/daemon.token (mode 0600).\n" +
-			"For CLI/API access, pass it as the X-Vaultx-Token header.\n\n" +
+			"  - Audit logging of all security events\n" +
+			"  - Optional syslog forwarding (--syslog-network, --syslog-address)\n\n" +
+			"A session token is stored in the OS keychain for secure access.\n" +
+			"For CLI/API access, vaultx commands automatically load it.\n\n" +
 			"Memory: the daemon uses GOGC=off + a soft memory limit (default 64 MiB).\n" +
 			"GC only runs when the heap approaches the limit, keeping idle CPU near zero.\n" +
 			"Override with --max-memory.",
 		Example: "  vaultx serve\n" +
 			"  vaultx serve --port 8080\n" +
 			"  vaultx serve --max-memory 32\n\n" +
+			"  # Enable syslog forwarding to local syslog\n" +
+			"  vaultx serve --syslog-network local\n\n" +
+			"  # Forward audit logs to remote syslog server\n" +
+			"  vaultx serve --syslog-network tcp --syslog-address syslog.example.com:514\n\n" +
 			"  # Open web UI in browser\n" +
-			"  open http://127.0.0.1:7474/\n\n" +
-			"  # Or use API directly\n" +
-			"  TOKEN=$(cat ~/.vaultx/daemon.token)\n" +
-			"  curl -H \"X-Vaultx-Token: $TOKEN\" http://localhost:7474/v1/secret?path=myapp/db",
+			"  open http://127.0.0.1:7474/",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Pin GC to trigger only at the memory limit, not on a timer.
 			// This keeps idle CPU at zero and avoids unnecessary page activity.
@@ -72,10 +76,24 @@ func cmdServe() *cobra.Command {
 				return fmt.Errorf("create daemon: %w", err)
 			}
 
+			// Enable syslog if configured
+			if syslogNetwork != "" {
+				if err := srv.EnableSyslog(syslogNetwork, syslogAddress); err != nil {
+					return fmt.Errorf("enable syslog: %w", err)
+				}
+			}
+
 			ux := uxFor(cmd)
 			fmt.Fprintf(os.Stderr, "%s  Listening on 127.0.0.1:%d  (memory limit: %d MiB)\n",
 				icon(ux.Emoji, "ok"), port, maxMemMB)
-			fmt.Fprintf(os.Stderr, "%s  Token: ~/.vaultx/daemon.token\n", icon(ux.Emoji, "info"))
+			if syslogNetwork != "" {
+				if syslogNetwork == "local" {
+					fmt.Fprintf(os.Stderr, "%s  Audit logs forwarding to local syslog\n", icon(ux.Emoji, "info"))
+				} else {
+					fmt.Fprintf(os.Stderr, "%s  Audit logs forwarding to %s://%s\n", 
+						icon(ux.Emoji, "info"), syslogNetwork, syslogAddress)
+				}
+			}
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -86,5 +104,7 @@ func cmdServe() *cobra.Command {
 
 	cmd.Flags().IntVarP(&port, "port", "p", 7474, "port to listen on")
 	cmd.Flags().IntVar(&maxMemMB, "max-memory", defaultMaxMemMB, "soft memory limit for the daemon in MiB")
+	cmd.Flags().StringVar(&syslogNetwork, "syslog-network", "", "syslog network: local, tcp, udp (empty = disabled)")
+	cmd.Flags().StringVar(&syslogAddress, "syslog-address", "", "syslog server address (host:port) for tcp/udp")
 	return cmd
 }

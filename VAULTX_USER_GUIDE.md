@@ -104,6 +104,135 @@ The vault is locked automatically when the daemon exits.
 
 ---
 
+## Multi-Factor Authentication (TOTP)
+
+Add TOTP-based 2FA to vault unlocking:
+
+```bash
+# Enable MFA (generates TOTP secret + QR code + 10 recovery codes)
+vaultx mfa enable
+
+# Scan QR code with authenticator app (Google Authenticator, Authy, 1Password, etc.)
+# Save recovery codes in a secure location
+
+# Unlock with MFA (password + 6-digit code)
+vaultx unlock
+# Master password: **********
+# Authenticator code: 123456
+
+# View remaining recovery codes
+vaultx mfa recovery-codes
+
+# Check MFA status
+vaultx mfa status
+
+# Disable MFA
+vaultx mfa disable
+```
+
+**Recovery codes**: 10 single-use codes generated during setup. Use if you lose access to your authenticator device. Each code can only be used once. Format: `ABCD-EFGH`.
+
+---
+
+## Encrypted Backups
+
+vaultx automatically backs up your vault after every mutation (set, delete):
+
+```bash
+# Backups stored in ~/.vaultx/backups/
+# Format: vault-2025-05-15T10-30-00.enc
+
+# List all backups
+vaultx backup list
+
+# Create a manual backup
+vaultx backup create
+
+# Restore from backup (with master password)
+vaultx backup restore vault-2025-05-15T10-30-00.enc
+```
+
+### Shamir Secret Sharing
+
+Split the backup encryption key into N shares, requiring M to restore:
+
+```bash
+# Split into 5 shares, requiring any 3 to restore
+vaultx backup split --shares 5 --threshold 3
+
+# Shares saved to ~/.vaultx/backup-shares/
+#   share-1.json, share-2.json, ..., share-5.json
+
+# Distribute shares to different secure locations
+
+# Restore using shares (provide any 3 of the 5)
+vaultx backup restore --shares share-1.json,share-3.json,share-4.json vault-2025-05-15T10-30-00.enc
+```
+
+**Use cases**:
+- Disaster recovery (distribute shares across team members)
+- Escrow (legal/compliance requirements)
+- Geographic distribution (fire, theft protection)
+- M-of-N governance (require M approvals from N stakeholders)
+
+---
+
+## Audit Logging
+
+All security events are logged and can be exported:
+
+```bash
+# View recent audit logs in terminal
+vaultx audit --limit 50
+
+# Export to JSON
+vaultx audit --format json --output audit.json
+
+# Export to CSV
+vaultx audit --format csv --output audit.csv
+```
+
+**Events logged**:
+- Vault unlocks (success/failure)
+- Secret access (get, list)
+- Secret mutations (set, delete)
+- MFA validation
+- Rate limit violations
+- Lockout triggers
+
+### Syslog Integration
+
+Forward audit logs to syslog servers:
+
+```bash
+# Local syslog
+vaultx serve --syslog-network local
+
+# Remote syslog (TCP)
+vaultx serve --syslog-network tcp --syslog-address syslog.example.com:514
+
+# Remote syslog (UDP)
+vaultx serve --syslog-network udp --syslog-address 192.168.1.100:514
+```
+
+---
+
+## Security Policies
+
+### Defense-in-Depth
+
+vaultx implements layered security controls:
+
+- **Rate limiting**: 10 unlock attempts per minute
+- **Lockout**: After 5 failed unlock attempts, vault locks for 30 minutes
+- **Auto-lock**: Vault auto-locks after 15 minutes of inactivity
+- **Memory protection**: Encryption keys locked in RAM (mlock/VirtualLock), prevented from swapping to disk
+- **Keychain storage**: Daemon session tokens stored in OS keychain (macOS Keychain), not plaintext files
+
+These policies protect against brute-force attacks and unauthorized access even if an attacker gains physical access to your machine.
+
+---
+
 ## Secret management
 
 ```bash
@@ -304,6 +433,20 @@ vaultx get <path>                    Get a single secret value
 vaultx delete <path>                 Delete a secret
 vaultx list [prefix]                 List secrets (values masked)
 
+vaultx mfa enable                    Enable TOTP multi-factor authentication
+vaultx mfa disable                   Disable TOTP MFA
+vaultx mfa status                    Show MFA status
+vaultx mfa recovery-codes            View remaining recovery codes
+
+vaultx backup create                 Create encrypted vault backup
+vaultx backup list                   List all backups
+vaultx backup restore <file>         Restore from backup (with password or shares)
+vaultx backup split [--shares N] [--threshold M]
+                                     Split backup key into Shamir shares
+
+vaultx audit [--limit N] [--format table|json|csv] [--output file]
+                                     Export audit logs
+
 vaultx run [--env file] -- <cmd>     Resolve vaultx.env and exec a command
 vaultx shell [--env file]            Print export statements for eval
 
@@ -314,7 +457,7 @@ vaultx providers                     List configured providers and health
 vaultx docs                          Pretty-print the public user guide
 vaultx completion [shell]            Install shell completion
 
-vaultx serve [--port N] [--max-memory MiB]
+vaultx serve [--port N] [--max-memory MiB] [--syslog-network net] [--syslog-address addr]
                                      Start local HTTP daemon (default 7474)
 
 vaultx docker run -- <args>          docker run with secrets as --env flags
@@ -337,8 +480,14 @@ Global flags: `--config <path>`, `--env <vaultx.env path>`, `--color auto|always
 | --- | --- |
 | **Secrets never on disk** | Vault stored as AES-256-GCM ciphertext; runtime values in process memory only |
 | **Master password never stored** | Argon2id → barrier key → wraps encryption key; key held in memory, zeroed on lock |
+| **Memory protection** | Encryption keys locked in RAM via mlock() (Unix/macOS) / VirtualLock (Windows) |
 | **`vaultx.env` safe to commit** | Contains only references, never values |
 | **Provider tokens never in config** | Read from env vars or OS keychain only |
+| **Daemon tokens in keychain** | Session tokens stored in macOS Keychain, not plaintext files |
+| **Defense-in-depth** | Rate limiting (10/min), lockout after 5 failures, auto-lock after 15min idle |
+| **Multi-factor authentication** | TOTP (RFC 6238) with QR code setup and recovery codes |
+| **Audit logging** | All access/mutations/failures logged; export to JSON/CSV or forward to syslog |
+| **Encrypted backups** | Auto-backup on mutations; Shamir secret sharing for distributed recovery |
 | **Password rotation is instant** | Re-wraps encryption key only — entries unchanged |
 | **Header tampering detected** | HMAC-SHA256(barrier key) on vault header |
 

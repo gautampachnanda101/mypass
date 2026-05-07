@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gautampachnanda101/vaultx/internal/memprotect"
 	"github.com/gautampachnanda101/vaultx/internal/providers"
 )
 
@@ -38,10 +39,11 @@ type Provider struct {
 	id   string
 	path string
 
-	mu     sync.RWMutex
-	sealed bool
-	ek     []byte       // encryption key, non-nil when unsealed
-	header *vaultHeader // retained for ChangePassword
+	mu       sync.RWMutex
+	sealed   bool
+	ek       []byte       // encryption key, non-nil when unsealed
+	eklocked func()       // unlock function for EK memory protection
+	header   *vaultHeader // retained for ChangePassword
 }
 
 // New creates a local vault provider. The vault is sealed until Unlock is called.
@@ -72,8 +74,16 @@ func (p *Provider) Init(password string) error {
 		return err
 	}
 
+	// Lock EK in RAM.
+	unlock, err := memprotect.Lock(ek)
+	if err != nil {
+		zeroBytes(ek)
+		return fmt.Errorf("lock encryption key: %w", err)
+	}
+
 	p.header = header
 	p.ek = ek
+	p.eklocked = unlock
 	p.sealed = false
 	return nil
 }
@@ -94,10 +104,22 @@ func (p *Provider) Unlock(password string) error {
 		return err
 	}
 
+	// Lock new EK in RAM.
+	unlock, lockErr := memprotect.Lock(ek)
+	if lockErr != nil {
+		zeroBytes(ek)
+		return fmt.Errorf("lock encryption key: %w", lockErr)
+	}
+
+	// Clean up old EK if present.
 	if p.ek != nil {
+		if p.eklocked != nil {
+			p.eklocked()
+		}
 		zeroBytes(p.ek)
 	}
 	p.ek = ek
+	p.eklocked = unlock
 	p.header = header
 	p.sealed = false
 	return nil
@@ -107,6 +129,10 @@ func (p *Provider) Unlock(password string) error {
 func (p *Provider) Lock() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.eklocked != nil {
+		p.eklocked()
+		p.eklocked = nil
+	}
 	if p.ek != nil {
 		zeroBytes(p.ek)
 		p.ek = nil
