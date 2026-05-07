@@ -246,7 +246,7 @@ func groupedHelpCommands(cmd *cobra.Command) string {
 		Names []string
 	}
 	groups := []group{
-		{Title: "Vault", Names: []string{"init", "unlock", "lock", "doctor"}},
+		{Title: "Vault", Names: []string{"init", "unlock", "lock", "doctor", "audit", "mfa", "backup"}},
 		{Title: "Secrets", Names: []string{"get", "set", "delete", "list"}},
 		{Title: "Inject", Names: []string{"run", "shell"}},
 		{Title: "Infrastructure", Names: []string{"serve", "docker", "k3d"}},
@@ -367,7 +367,6 @@ func contextualHelpGuide(cmd *cobra.Command) string {
 - Reload without restarting: source ~/.zshrc  (or ~/.bashrc)`)
 	case strings.HasSuffix(path, "docs"):
 		return strings.TrimSpace(`- Print shipped public guide: vaultx docs
-- Render an explicit file: vaultx docs --file ./VAULTX_USER_GUIDE.md
 - Read command-level help: vaultx docs --help`)
 	case strings.HasSuffix(path, "doctor"):
 		return strings.TrimSpace(`- Full check: vaultx doctor
@@ -379,6 +378,66 @@ func contextualHelpGuide(cmd *cobra.Command) string {
 	}
 }
 
+// buildLongDescription generates a colored and emoji-decorated Long description
+func buildLongDescription(useColor, useEmoji bool) string {
+	c := func(code, s string) string { return style(useColor, code, s) }
+	e := func(emoji, fallback string) string {
+		if useEmoji {
+			return emoji
+		}
+		return fallback
+	}
+
+	var sb strings.Builder
+	sb.WriteString(c(ansiBold+ansiCyan, "vaultx"))
+	sb.WriteString(" — zero-trust secrets broker\n\n")
+	sb.WriteString("vaultx.env is safe to commit. It contains only references, never values.\n")
+	sb.WriteString("At runtime, vaultx run resolves each reference and injects the real\n")
+	sb.WriteString("secret into your process — nothing ever touches disk.\n\n")
+
+	sb.WriteString(c(ansiBold+ansiGreen, e("🚀 ", "")+"Quick start:"))
+	sb.WriteString("\n  ")
+	sb.WriteString(c(ansiCyan, e("🔐 ", "▶ ")+"vaultx init --biometric"))
+	sb.WriteString("       Create vault + enable Touch ID\n  ")
+	sb.WriteString(c(ansiCyan, e("💾 ", "▶ ")+"vaultx set myapp/db_pass s3cr3t"))
+	sb.WriteString("    Store a secret\n  ")
+	sb.WriteString(c(ansiCyan, e("⚡ ", "▶ ")+"vaultx run -- npm start"))
+	sb.WriteString("            Resolve vaultx.env and run your app\n  ")
+	sb.WriteString(c(ansiCyan, e("🌐 ", "▶ ")+"vaultx serve"))
+	sb.WriteString("                       Start web UI at http://127.0.0.1:7474/\n  ")
+	sb.WriteString(c(ansiCyan, e("📖 ", "▶ ")+"vaultx docs"))
+	sb.WriteString("                        Read the shipped public user guide\n  ")
+	sb.WriteString(c(ansiCyan, e("🐚 ", "▶ ")+"eval $(vaultx shell)"))
+	sb.WriteString("               Inject secrets into current shell\n\n")
+
+	sb.WriteString(c(ansiBold+ansiBlue, e("⚙️  ", "")+"Configuration:"))
+	sb.WriteString("\n  ")
+	sb.WriteString(c(ansiYellow, "~/.vaultx/config.toml"))
+	sb.WriteString("   Multi-provider config (local, 1Password, HashiCorp, AWS)\n  ")
+	sb.WriteString(c(ansiYellow, "~/.vaultx/vault.enc"))
+	sb.WriteString("     Local encrypted vault (Argon2id + AES-256-GCM)\n  ")
+	sb.WriteString(c(ansiYellow, "vaultx.env"))
+	sb.WriteString("              Secret reference file — commit this\n\n")
+
+	sb.WriteString(c(ansiBold+ansiMagenta, e("🔧 ", "")+"Troubleshooting:"))
+	sb.WriteString("\n  ")
+	sb.WriteString(c(ansiCyan, "vaultx docs"))
+	sb.WriteString("         Read the shipped public guide in terminal\n  ")
+	sb.WriteString(c(ansiCyan, "vaultx providers"))
+	sb.WriteString("    Check all configured providers and health\n  ")
+	sb.WriteString(c(ansiCyan, "vaultx version"))
+	sb.WriteString("      Show version\n\n")
+
+	sb.WriteString(c(ansiBold+ansiYellow, e("🌐 ", "")+"Web UI:"))
+	sb.WriteString("\n  ")
+	sb.WriteString(c(ansiCyan, "vaultx serve"))
+	sb.WriteString("        Start daemon with embedded web UI\n")
+	sb.WriteString("                      Open http://127.0.0.1:7474/ in your browser\n")
+	sb.WriteString("                      Touch ID authentication required (macOS)")
+
+	return sb.String()
+}
+
 // ── Root command ───────────────────────────────────────────────────────────────
 
 // Root returns the root cobra command.
@@ -386,34 +445,7 @@ func Root() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "vaultx",
 		Short: "The convenience of an env file. The power of a zero-trust vault.",
-		Long: strings.TrimSpace(`vaultx — zero-trust secrets broker
-
-vaultx.env is safe to commit. It contains only references, never values.
-At runtime, vaultx run resolves each reference and injects the real
-secret into your process — nothing ever touches disk.
-
-Quick start:
-  vaultx init --biometric       Create vault + enable Touch ID
-  vaultx set myapp/db_pass s3cr3t    Store a secret
-  vaultx run -- npm start            Resolve vaultx.env and run your app
-  vaultx serve                       Start web UI at http://127.0.0.1:7474/
-	vaultx docs                        Read the shipped public user guide
-  eval $(vaultx shell)               Inject secrets into current shell
-
-Configuration:
-  ~/.vaultx/config.toml   Multi-provider config (local, 1Password, HashiCorp, AWS)
-  ~/.vaultx/vault.enc     Local encrypted vault (Argon2id + AES-256-GCM)
-  vaultx.env              Secret reference file — commit this
-
-Troubleshooting:
-  vaultx docs         Read the shipped public guide in terminal
-  vaultx providers    Check all configured providers and health
-  vaultx version      Show version
-
-Web UI:
-  vaultx serve        Start daemon with embedded web UI
-                      Open http://127.0.0.1:7474/ in your browser
-                      Touch ID authentication required (macOS)`),
+		Long:  "", // Will be set dynamically in Run
 		Example: "  vaultx init --biometric\n  vaultx set myapp/db_password \"s3cr3t\"\n  vaultx run -- npm start\n  vaultx serve\n  vaultx docs\n  eval $(vaultx shell)\n  vaultx providers",
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -499,6 +531,17 @@ Web UI:
 	)
 
 	configureRichHelp(root)
+	
+	// Set Long description dynamically based on terminal capabilities
+	originalHelpFunc := root.HelpFunc()
+	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		if cmd == root && cmd.Long == "" {
+			ux := uxFor(cmd)
+			cmd.Long = buildLongDescription(ux.Color, ux.Emoji)
+		}
+		originalHelpFunc(cmd, args)
+	})
+	
 	return root
 }
 
