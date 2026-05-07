@@ -21,8 +21,8 @@
 
         <div class="tabs">
             <button class="tab active" data-tab="secrets">Secrets</button>
-            <button class="tab" data-tab="resolve">Resolve</button>
             <button class="tab" data-tab="audit">Audit Log</button>
+            <button class="tab" data-tab="help">How To Use</button>
         </div>
 
         <!-- Secrets Tab -->
@@ -38,22 +38,62 @@
             </div>
         </div>
 
-        <!-- Resolve Tab -->
-        <div id="resolve-tab" class="tab-content">
-            <div class="resolve-section">
-                <h3>Resolve vaultx.env File</h3>
-                <p class="help-text">Paste your vaultx.env content below to resolve all vault: references</p>
+        <!-- How To Use Tab -->
+        <div id="help-tab" class="tab-content">
+            <div class="help-section">
+                <h3>📖 How to Use vaultx</h3>
                 
-                <textarea id="env-input" class="env-textarea" placeholder="DB_PASSWORD=vault:local/myapp/db_password
+                <div class="info-box">
+                    <p><strong>🔍 This Web UI:</strong></p>
+                    <p>Browse your stored secrets (read-only). Values are masked for security.</p>
+                </div>
+
+                <h4 style="margin-top: 2rem; color: var(--primary-color);">💻 Command Line Usage</h4>
+                
+                <div class="help-item">
+                    <h5>🏃 Run any command with secrets injected</h5>
+                    <pre class="code-block">vaultx run -- your-app
+vaultx run -- npm start
+vaultx run -- python app.py</pre>
+                    <p class="help-text">Secrets from vaultx.env are automatically injected into your app's environment.</p>
+                </div>
+
+                <div class="help-item">
+                    <h5>🐳 Docker & Docker Compose</h5>
+                    <pre class="code-block">vaultx docker run -- myapp:latest
+vaultx docker run -- -p 8080:8080 myapp:latest
+
+vaultx docker compose -- up -d
+vaultx docker compose -- up --build</pre>
+                    <p class="help-text">Injects secrets into containers without writing env files to disk (like 1Password).</p>
+                </div>
+
+                <div class="help-item">
+                    <h5>📝 Create a vaultx.env file</h5>
+                    <pre class="code-block"># vaultx.env - safe to commit!
+DATABASE_PASSWORD=vault:local/myapp/db_password
 API_KEY=vault:local/myapp/api_key
-APP_ENV=development"></textarea>
-                
-                <button id="resolve-btn" class="btn btn-primary">Resolve Secrets</button>
-                
-                <div id="resolve-output" class="resolve-output" style="display: none;">
-                    <h4>Resolved Environment Variables</h4>
-                    <pre id="resolved-content"></pre>
-                    <button id="copy-resolved-btn" class="btn btn-secondary">📋 Copy to Clipboard</button>
+DEBUG=false  # plain values work too</pre>
+                    <p class="help-text">Reference secrets with <code>vault:local/path</code>. Plain values pass through unchanged.</p>
+                </div>
+
+                <div class="help-item">
+                    <h5>🔐 Manage secrets</h5>
+                    <pre class="code-block">vaultx set myapp/db_password
+vaultx get myapp/db_password
+vaultx list
+vaultx delete myapp/old_key</pre>
+                </div>
+
+                <div class="help-item">
+                    <h5>🔒 Lock/Unlock vault</h5>
+                    <pre class="code-block">vaultx lock    # Clear passphrase from memory
+vaultx unlock  # Re-authenticate with Touch ID</pre>
+                </div>
+
+                <div class="info-box" style="margin-top: 2rem; background-color: #fff5f5; border-color: #fca5a5;">
+                    <p><strong>⚠️ Security:</strong></p>
+                    <p>Secrets are <strong>never written to disk</strong> in plain text. They exist only in process memory and are injected directly into your applications.</p>
                 </div>
             </div>
         </div>
