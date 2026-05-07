@@ -1,4 +1,6 @@
-// Package syslog provides audit log forwarding to syslog servers.
+//go:build !windows
+// +build !windows
+
 package syslog
 
 import (
