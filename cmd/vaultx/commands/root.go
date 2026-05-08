@@ -640,7 +640,7 @@ func loadState() error {
 
 // requireUnlocked unlocks the vault. It first tries the passkey store (Touch ID
 // on macOS), then falls back to prompting the user for their master password.
-// Enforces rate limiting and lockout policies.
+// Enforces rate limiting, lockout policies, and MFA validation (if enabled).
 func requireUnlocked() error {
 	if !state.vault.IsSealed() {
 		// Record activity for auto-lock timer
@@ -657,6 +657,8 @@ func requireUnlocked() error {
 		}
 	}
 
+	var unlocked bool
+
 	// Try the passkey store first — Touch ID on macOS, no-op elsewhere.
 	if stored, ok := passkey.Load(); ok {
 		err := state.vault.Unlock(stored)
@@ -670,33 +672,37 @@ func requireUnlocked() error {
 		}
 
 		if success {
-			return nil
-		}
-		// Stored credential is stale — clear it and fall through to prompt.
-		passkey.Clear()
-	}
-
-	// Prompt for master password
-	pass, err := readPassword("Master password: ")
-	if err != nil {
-		return err
-	}
-
-	unlockErr := state.vault.Unlock(pass)
-	success := (unlockErr == nil)
-
-	if state.policy != nil {
-		state.policy.RecordUnlockAttempt(success)
-		if success {
-			state.policy.StartAutoLock()
+			unlocked = true
+		} else {
+			// Stored credential is stale — clear it and fall through to prompt.
+			passkey.Clear()
 		}
 	}
 
-	if unlockErr != nil {
-		return unlockErr
+	// If Touch ID didn't work, prompt for master password
+	if !unlocked {
+		pass, err := readPassword("Master password: ")
+		if err != nil {
+			return err
+		}
+
+		unlockErr := state.vault.Unlock(pass)
+		success := (unlockErr == nil)
+
+		if state.policy != nil {
+			state.policy.RecordUnlockAttempt(success)
+			if success {
+				state.policy.StartAutoLock()
+			}
+		}
+
+		if unlockErr != nil {
+			return unlockErr
+		}
+		unlocked = true
 	}
 
-	// Check if MFA is enabled and validate TOTP code
+	// Check if MFA is enabled and validate TOTP code (for ALL unlock methods)
 	home, _ := os.UserHomeDir()
 	mfaPath := filepath.Join(home, ".vaultx", "mfa.json")
 	mfaMgr := mfa.New(mfaPath)
