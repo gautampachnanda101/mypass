@@ -713,7 +713,7 @@ func requireUnlocked() error {
 		return nil
 	}
 
-	if mfaEnabled {
+	if mfaEnabled && !mfaMgr.SessionValid() {
 		// Prompt for TOTP code
 		fmt.Fprint(os.Stderr, "Authenticator code: ")
 		var code string
@@ -732,6 +732,7 @@ func requireUnlocked() error {
 			state.vault.Lock()
 			return fmt.Errorf("invalid authenticator code")
 		}
+		mfaMgr.SaveSession()
 	}
 
 	return nil

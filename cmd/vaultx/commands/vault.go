@@ -188,10 +188,15 @@ func cmdSet() *cobra.Command {
 			if err := requireUnlocked(); err != nil {
 				return err
 			}
-			if err := state.vault.Set(context.Background(), args[0], args[1]); err != nil {
+			path := args[0]
+			if strings.HasPrefix(path, "vault:") {
+				return fmt.Errorf("key must not start with 'vault:' — did you mean: vaultx set %s <value>",
+					strings.TrimPrefix(path, "vault:"))
+			}
+			if err := state.vault.Set(context.Background(), path, args[1]); err != nil {
 				return err
 			}
-			fmt.Fprintf(os.Stderr, "Set %s\n", args[0])
+			fmt.Fprintf(os.Stderr, "Set %s\n", path)
 			
 			// Auto-backup after mutation
 			autoBackup()

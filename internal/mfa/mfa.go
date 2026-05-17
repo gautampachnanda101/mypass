@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	issuer  = "vaultx"
-	account = "vaultx-vault"
+	issuer              = "vaultx"
+	account             = "vaultx-vault"
+	mfaSessionDuration  = 5 * time.Minute
 )
 
 // Config holds MFA configuration stored in ~/.vaultx/mfa.json
@@ -181,6 +182,32 @@ func generateRecoveryCodes(n int) ([]string, error) {
 	}
 
 	return codes, nil
+}
+
+func (m *Manager) sessionPath() string {
+	return filepath.Join(filepath.Dir(m.configPath), "mfa_session")
+}
+
+// SessionValid returns true if there is a recent successful MFA validation within the session window.
+func (m *Manager) SessionValid() bool {
+	data, err := os.ReadFile(m.sessionPath())
+	if err != nil {
+		return false
+	}
+	var ts time.Time
+	if err := ts.UnmarshalText([]byte(strings.TrimSpace(string(data)))); err != nil {
+		return false
+	}
+	return time.Since(ts) < mfaSessionDuration
+}
+
+// SaveSession records a successful MFA validation timestamp.
+func (m *Manager) SaveSession() {
+	data, err := time.Now().UTC().MarshalText()
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(m.sessionPath(), data, 0600)
 }
 
 // IsEnabled checks if MFA is enabled.

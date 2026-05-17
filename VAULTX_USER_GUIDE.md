@@ -132,6 +132,8 @@ vaultx mfa disable
 
 **Recovery codes**: 10 single-use codes generated during setup. Use if you lose access to your authenticator device. Each code can only be used once. Format: `ABCD-EFGH`.
 
+**MFA session caching**: After a successful TOTP validation, vaultx caches the result for 5 minutes in `~/.vaultx/mfa_session`. Commands run within that window (e.g., repeated `vaultx run` invocations) skip the authenticator prompt. After 5 minutes the code is required again.
+
 ---
 
 ## Encrypted Backups
